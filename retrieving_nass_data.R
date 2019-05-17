@@ -13,7 +13,7 @@ tabular_data_path <- "/Users/ssaia/Dropbox/GW-Food Nexus/tabular_data/nass_data/
 tabular_data_output_path <- "/Users/ssaia/Dropbox/GW-Food Nexus/tabular_data/nass_data/"
 
 # load county ids data (reformatted 'AGDominatedCounties.xlsx' file)
-county_ids_raw <- read.csv(paste0(tabular_data_path, "ag_dominated_counties.csv"))
+county_ids_raw <- read.csv(paste0(tabular_data_path, "ag_dominated_counties_update05082019.csv"))
 
 # define fips codes from reformatted 'AGDominatedCounties.xlsx' file
 county_ids <- county_ids_raw %>%
@@ -106,16 +106,16 @@ merge_data <- rbind(yield_data, area_planted_data) %>%
          year = as.numeric(str_sub(fips_year, 7, 10))) %>%
   ungroup(fips_year) %>%
   select(fips, year, yield_bu_per_acre, area_planted_acres) %>%
-  left_join(county_data, by = "fips")
+  left_join(county_data, by = "fips") %>%
+  mutate(yield_bu_per_sqkm = yield_bu_per_acre * 247.105,
+         area_planted_sqkm = area_planted_acres * (1/247.105)) %>%
+  select(year, state_alpha, county_name_full, fips, region,
+         ag_area_sqkm, county_area_sqkm, county_area_under_ag_percent,
+         yield_bu_per_sqkm, area_planted_sqkm) %>%
+  na.omit()
 
 # export merged data
 write_csv(merge_data, paste0(tabular_data_output_path, "la_nass_corn_data.csv"))
-
-
-# to ask Nitin:
-# 1. there is also corn grain yield in bu per net planted acre. does he want this?
-# 2. does he want sales, operations, or area harvested data?
-
 
 #  extra code
 # select and reformat area harvested data
@@ -132,3 +132,7 @@ corn_sales_data <- corn_data %>%
 
 corn_production_data <- corn_data %>%
   filter(statisticcat_desc_full == "production")
+
+
+# to do:
+# for expense data need to make another r script
