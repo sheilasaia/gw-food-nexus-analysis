@@ -251,7 +251,20 @@ merge_data <- rbind(yield_data, area_planted_data, net_income_data, income_data)
 write_csv(merge_data, paste0(tabular_data_output_path, "la_nass_corn_data.csv"))
 
 
-# ---- 6. extra code ----
+# ---- 6. corn download funciton ----
+
+get_nass_corn <- function(state) {
+  
+  
+}
+
+# ---- 7. corn function in action ----
+
+
+
+
+
+# ---- x. extra code ----
 # select and reformat area harvested data
 corn_area_harvested_data <- corn_data %>%
   filter(statisticcat_desc_full == "area_harvested") %>%
@@ -268,5 +281,5 @@ corn_production_data <- corn_data %>%
   filter(statisticcat_desc_full == "production")
 
 
-# ---- 7. to do: ----
+# ---- x. to do: ----
 # make function and for loop for multiple states
