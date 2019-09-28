@@ -20,6 +20,7 @@ tabular_data_output_path <- "/Users/ssaia/Dropbox/GW-Food Nexus/tabular_data/nas
 # load nass key
 # nass_key = "<your nass key here>"
 
+
 # ---- 2. load county metadata ----
 
 # load county ids data (reformatted 'AGDominatedCounties.xlsx' file)
