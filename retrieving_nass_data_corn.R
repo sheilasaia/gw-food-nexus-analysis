@@ -8,6 +8,7 @@ library(here)
 library(httr)
 library(jsonlite)
 library(purrr)
+library(maps)
 
 # define paths
 # when we put the final data on github we'll use relative paths based on the project
@@ -31,7 +32,7 @@ county_ids <- county_ids_raw %>%
   mutate(state_fips_pad = str_pad(state_fips, 2, pad = "0"), # pad with zeros if not 2 digits
          county_fips_pad = str_pad(county_fips, 3, pad = "0"), #pad with zeros if not 3 digits
          fips = as.character(paste0(state_fips_pad, county_fips_pad))) %>% # create fips key for later dataframe joining
-  select(fips, county_area_sqkm:county_area_under_ag_percent) # select only needed columns
+  select(fips, state_fips, county_area_sqkm:county_area_under_ag_percent) # select only needed columns
 
 
 # ---- 3. get nass data ----
@@ -402,14 +403,23 @@ get_nass_corn <- function(state) {
 # ---- 7. corn function in action ----
 
 # all 50 states (list)
-my_conus_state_list <- data.frame(state_alpha = state.abb) %>%
-  filter(state_alpha != "AK" & state_alpha != "HI")
+# my_conus_state_list <- data.frame(state_alpha = state.abb) %>%
+#   filter(state_alpha != "AK" & state_alpha != "HI")
+
+# states of interest for gw-food-nexus project
+my_sel_conus_state_list <- maps::state.fips %>%
+  select(state_alpha = abb, state_fips = fips) %>%
+  right_join(county_ids, by = "state_fips") %>% # see code section 2. for county_ids
+  select(state_alpha) %>%
+  distinct() %>%
+  arrange(state_alpha)
+# 33 unique states identified (out of 48 conus states)
 
 # loop
-for (i in 1:length(my_conus_state_list$state_alpha)) {
+for (i in 1:length(my_sel_conus_state_list$state_alpha)) {
   
   # call a state
-  temp_state <- "CT" #my_conus_state_list$state_alpha[i]
+  temp_state <- my_sel_conus_state_list$state_alpha[i]
   
   # get data
   temp_data <- get_nass_corn(temp_state)
