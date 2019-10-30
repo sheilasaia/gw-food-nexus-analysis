@@ -1,14 +1,12 @@
-# retrieving nass data
+# retrieving nass data v2
 
 # ---- 1. set up ----
 
 # load libraries
 library(tidyverse)
-library(here)
-library(httr)
-library(jsonlite)
-library(purrr)
+# library(here)
 library(maps)
+library(rnassqs)
 
 # define paths
 # when we put the final data on github we'll use relative paths based on the project
@@ -21,12 +19,19 @@ tabular_data_output_path <- "/Users/ssaia/Dropbox/GW-Food Nexus/tabular_data/nas
 # load nass key
 # nass_key = "<your nass key here>"
 
+# set nass key for rnassqs package
+nassqs_auth(key = nass_key)
+
 
 # ---- 2. load county metadata ----
 
 # state fips and abbreviation lookup
 state_ids <- maps::state.fips %>%
-  select(state_alpha = abb, state_fips = fips)
+  mutate(fips_pad = as.character(str_pad(fips, 2, pad = "0"))) %>%
+  select(state_alpha = abb, 
+         state_fips = fips_pad) %>%
+  filter(state_alpha != "DC") %>%
+  distinct()
 
 # load county ids data (reformatted 'AGDominatedCounties.xlsx' file)
 county_ids_raw <- read_csv(paste0(tabular_data_path, "ag_dominated_counties_update05082019.csv"))
@@ -36,485 +41,309 @@ county_ids <- county_ids_raw %>%
   mutate(state_fips_pad = str_pad(state_fips, 2, pad = "0"), # pad with zeros if not 2 digits
          county_fips_pad = str_pad(county_fips, 3, pad = "0"), #pad with zeros if not 3 digits
          fips = as.character(paste0(state_fips_pad, county_fips_pad))) %>% # create fips key for later dataframe joining
+  select(-state_fips, -county_fips) %>%
+  select(fips, state_fips = state_fips_pad, county_fips = county_fips_pad, COUNTYNS:county_area_under_ag_percent) %>%
   left_join(state_ids, by = "state_fips") %>%
-  select(fips, state_fips, state_alpha, county_area_sqkm:county_area_under_ag_percent) # select only needed columns
+  arrange(fips)
 
 
-# ---- 3. get nass data ----
+# ---- 3. get_nass_corn function v2 ----
 
-# nass api key
-# need to call your nass api key into Sys.Env memory
-# request a nass api key at: https://quickstats.nass.usda.gov/api
-# nass_key <- "<your number here>"
+# list of parameters
+# nassqs_params() # just to see what parameters you can define
+# look at https://ropensci.github.io/rnassqs/articles/rnassqs.html for more info
+# nassqs_params("county_ansi") # to see specific parameter description
 
-# nass url
-nass_url <- "http://quickstats.nass.usda.gov"
+gwn_get_nass_data <- function(nass_state_fips, nass_county_fips, nass_crop, nass_crop_full, nass_yield_desc, nass_planted_desc, nass_harvested_desc) {
+  # state_fips must be a 2-digit character
+  # county_fips must be a 3-digit character
+  # crop
+  # nass_crop_yield_desc
+  # nass_area_planted_desc
+  # there's also corn grain (organic) and silage (organic and non-organic) values we could add here
 
-# commodity description of interest
-my_commodity_desc <- "CORN" # this is corn for grain (not sillage)
-# my_commodity_desc <- "SOYBEANS"
-# my_commodity_desc <- "WHEAT"
-# my_commodity_desc <- "RICE"
-# my_commodity_desc <- "COTTON"
-# my_commodity_desc_expenses <- "EXPENSE TOTALS"
-my_commodity_desc_net_income <- "INCOME, NET CASH FARM"
-my_commodity_desc_income <- "INCOME, FARM-RELATED"
-
-# query start year
-# my_year <- "2017"
-# don't define this if you want all years available
-
-# state of interest
-my_state <- "GA"
-
-# aggregation level of interest
-my_agg_level <- "COUNTY"
-
-# final path string
-# path_corn <- paste0("api/api_GET/?key=", nass_key, "&commodity_desc=", my_commodity_desc, "&year__GE=", my_year, "&state_alpha=", my_state) # for specific year
-api_path_crop <- paste0("api/api_GET/?key=", nass_key, "&commodity_desc=", my_commodity_desc, "&state_alpha=", my_state) # for all years
-# api_path_expenses <- paste0("api/api_GET/?key=", nass_key, "&commodity_desc=", my_commodity_desc_expenses, "&state_alpha=", my_state) # for all years
-api_path_net_income <- paste0("api/api_GET/?key=", nass_key, "&commodity_desc=", my_commodity_desc_net_income, "&state_alpha=", my_state, "&agg_level_desc=", my_agg_level) # for all years
-api_path_income <- paste0("api/api_GET/?key=", nass_key, "&commodity_desc=", my_commodity_desc_income, "&state_alpha=", my_state, "&agg_level_desc=", my_agg_level) # for all years
-
-# get raw data
-raw_data_crop <- GET(url = nass_url, path = api_path_crop)
-# raw_data_expenses <- GET(url = nass_url, path = api_path_expenses)
-raw_data_net_income <- GET(url = nass_url, path = api_path_net_income)
-raw_data_income <- GET(url = nass_url, path = api_path_income)
-
-# check status of api query
-raw_data_crop$status_code
-# raw_data_expenses$status_code
-raw_data_net_income$status_code
-raw_data_income$status_code
-# 200 is good! no issues.
-# 413 query is too big to handle
-
-# convert to character
-char_raw_data_crop <- rawToChar(raw_data_crop$content)
-# char_raw_data_expenses <- rawToChar(raw_data_expenses$content)
-char_raw_data_net_income <- rawToChar(raw_data_net_income$content)
-char_raw_data_income <- rawToChar(raw_data_income$content)
-
-# make into a list
-list_raw_data_crop <- fromJSON(char_raw_data_crop)
-# list_raw_data_expenses <- fromJSON(char_raw_data_expenses)
-list_raw_data_net_income <- fromJSON(char_raw_data_net_income)
-list_raw_data_income <- fromJSON(char_raw_data_income)
-
-# map to data frame
-raw_data_crop <- pmap_dfr(list_raw_data_crop, rbind)
-# raw_data_expenses <- pmap_dfr(list_raw_data_expenses, rbind)
-raw_data_net_income <- pmap_dfr(list_raw_data_net_income, rbind)
-raw_data_income <- pmap_dfr(list_raw_data_income, rbind)
-
-# clean up yield, area planted, and sales data
-crop_data <- raw_data_crop %>%
-  filter(agg_level_desc == "COUNTY") %>% # only want countly level data
-  filter(prodn_practice_desc == "ALL PRODUCTION PRACTICES") %>%
-  mutate(fips = paste0(state_fips_code, county_code),
-         county_name_full = str_to_title(county_name),
-         region = str_to_title(asd_desc),
-         nass_description = str_to_lower(str_replace_all(str_replace_all(str_replace_all(str_remove_all(str_remove_all(short_desc, ","), "-"), "  ", " "), "/", "PER"), " ", "_")),
-         statistic_cat_desc = str_remove_all(str_replace_all(str_to_lower(statisticcat_desc), " ", "_"), ","),
-         units = str_replace_all(str_replace(str_to_lower(unit_desc), "/", "per"), " ", "_"),
-         value_annual = str_trim(Value)) %>% # trim white-space
-  select(fips, state_alpha, county_name_full, region, year, value_annual, statistic_cat_desc, units, nass_description) %>%
-  filter(value_annual != "(D)" & value_annual != "(Z)") %>% # remove rows without data
-  mutate(value_annual = as.numeric(str_remove_all(value_annual, ","))) %>%
-  filter(county_name_full != "Other (Combined) Counties") # remove un-named counties
+  # nass query record limit as defined by NASS Quick Stats API
+  nass_limit <- 50000
   
-# county metadata (join nass county data with ag dominated county_ids dataframe)
-county_data <- crop_data %>%
-  select(fips:region) %>%
-  distinct() %>%
-  left_join(county_ids, by = "fips")
-
-# select and reformat yield data
-yield_data <- crop_data %>%
-  filter(statistic_cat_desc == "yield" & nass_description == "corn_grain_yield_measured_in_bu_per_acre") %>%
-  mutate(cat_units = paste0(statistic_cat_desc, "_", units),
-         fips_year = paste0(fips, "_", year)) %>%
-  select(fips_year, nass_description, value_annual, cat_units) # select only necessary columns
-
-# select and reformat area planted data
-area_planted_data <- crop_data %>%
-  filter(statistic_cat_desc == "area_planted") %>%
-  mutate(cat_units = paste0(statistic_cat_desc, "_", units),
-         fips_year = paste0(fips, "_", year)) %>%
-  select(fips_year, nass_description, value_annual, cat_units) # select only necessary columns
-
-# select and reformat sales data
-# sales_data <- crop_data %>%
-#   filter(statistic_cat_desc == "sales") %>%
-#   mutate(cat_units = paste0(statistic_cat_desc, "_", units),
-#          fips_year = paste0(fips, "_", year),
-#          cat_units = case_when(cat_units == "sales_$" ~ "sales_usd",
-#                                cat_units == "sales_operations" ~ "sales_num_operations")) %>%
-#   select(fips_year, nass_description, value_annual, cat_units) # select only necessary columns
-
-# select and reformat expense data
-# expense_data <- raw_data_expenses %>%
-#   filter(agg_level_desc == "COUNTY") %>% # only want countly level data
-#   filter(domain_desc == "TOTAL" & domaincat_desc == "NOT SPECIFIED") %>% # only want non-demongraphics results
-#   mutate(fips = paste0(state_fips_code, county_code),
-#          statistic_cat_desc = "expenses",
-#          class_desc_short = str_to_lower(str_replace_all(str_replace(class_desc, ",", ""), " ", "_")),
-#          units = str_to_lower(str_replace_all(str_replace(unit_desc, "/", "per"), " ", "_")),
-#          cat_units = paste0(class_desc_short, "_", statistic_cat_desc, "_", units),
-#          nass_description = str_to_lower(str_replace_all(str_sub(str_replace_all(str_replace_all(str_remove_all(str_remove_all(short_desc, ","), "-"), "  ", " "), "/", "per"), 26, -1), " ", "-")),
-#          value_annual = str_trim(Value)) %>%
-#   select(fips, year, nass_description, value_annual, cat_units) %>%
-#   filter(value_annual != "(D)" & value_annual != "(Z)") %>% # remove rows without data
-#   mutate(fips_year = paste0(fips, "_", year),
-#          value_annual = as.numeric(str_remove_all(value_annual, ","))) %>%
-#   mutate(cat_units = case_when(cat_units == "operating_expenses_$" ~ "expenses_usd",
-#                                cat_units == "operating_expenses_$_per_operation" ~ "expenses_usd_per_operation",
-#                                cat_units == "operating_expenses_operations" ~ "expenses_num_operations",
-#                                cat_units == "operating_paid_by_landlord_expenses_$" ~ "expenses_paid_by_landlord_usd",
-#                                cat_units == "operating_paid_by_landlord_expenses_operations" ~ "expenses_paid_by_landlord_num_operations")) %>%
-#   select(fips_year, nass_description, value_annual, cat_units)
-
-# select and reformat net income data
-net_income_data <- raw_data_net_income %>% 
-  filter(short_desc == "INCOME, NET CASH FARM, OF OPERATIONS - NET INCOME, MEASURED IN $") %>% 
-  filter(domaincat_desc == "NOT SPECIFIED") %>%
-  mutate(fips = paste0(state_fips_code, county_code),
-         statistic_cat_desc = str_replace(str_to_lower(statisticcat_desc), " ", "_"),
-         class_desc_short = str_to_lower(str_replace_all(str_replace(class_desc, ",", ""), " ", "_")),
-         cat_units = paste0(statistic_cat_desc, "_", class_desc_short, "_", unit_desc),
-         nass_description = paste0(statistic_cat_desc, "_", class_desc_short),
-         value_annual = str_trim(Value)) %>%
-  select(fips, year, nass_description, value_annual, cat_units) %>%
-  filter(value_annual != "(D)" & value_annual != "(Z)") %>% # remove rows without data
-  mutate(fips_year = paste0(fips, "_", year),
-         value_annual = as.numeric(str_remove_all(value_annual, ","))) %>%
-  mutate(cat_units = recode(cat_units, "net_income_of_operations_$" = "net_income_of_operations_usd")) %>%
-  select(fips_year, nass_description, value_annual, cat_units)
-
-# select and reformat income receipts data
-income_data <- raw_data_income %>% 
-  filter(short_desc == "INCOME, FARM-RELATED - RECEIPTS, MEASURED IN $") %>% 
-  filter(domaincat_desc == "NOT SPECIFIED") %>%
-  mutate(fips = paste0(state_fips_code, county_code),
-         statistic_cat_desc = str_to_lower(statisticcat_desc),
-         cat_units = paste0(str_to_lower(group_desc), "_", statistic_cat_desc, "_", unit_desc),
-         nass_description = paste0(str_to_lower(group_desc), "_", statistic_cat_desc),
-         value_annual = str_trim(Value)) %>%
-  select(fips, year, nass_description, value_annual, cat_units) %>%
-  filter(value_annual != "(D)" & value_annual != "(Z)") %>% # remove rows without data
-  mutate(fips_year = paste0(fips, "_", year),
-         value_annual = as.numeric(str_remove_all(value_annual, ","))) %>%
-  mutate(cat_units = recode(cat_units, "income_receipts_$" = "income_receipts_usd")) %>%
-  select(fips_year, nass_description, value_annual, cat_units)
+  # define corn yield parameters
+  yield_params <- list(commodity_desc = nass_crop,
+                       short_desc = nass_yield_desc,
+                       agg_level_desc = "COUNTY",
+                       source_desc = "SURVEY",
+                       #year__GE = "2000", # years greater than 2000
+                       state_ansi = nass_state_fips, # 2-digit state fips 00 - 99
+                       county_ansi = nass_county_fips) # 3-digit county code 000 - 999
   
-
-# ---- 4. merge and reformat nass data ----
-
-# combine yield, area planted, net income, and income receipts data
-merge_data <- rbind(yield_data, area_planted_data, net_income_data, income_data) %>% # NOTE! all dataframes have to have the same columns & column order!
-  select(-nass_description) %>% # delete this for now
-  group_by(fips_year) %>%
-  spread(key = cat_units, value = value_annual) %>% # spread data to format as requested
-  mutate(fips = str_sub(fips_year, 1, 5),
-         year = as.numeric(str_sub(fips_year, 7, 10)), # break out fips and year
-         crop_type = str_to_lower(my_commodity_desc)) %>%
-  ungroup(fips_year) %>% # ungroup to prevent errors later
-  select(fips, year, crop_type, yield_bu_per_acre, area_planted_acres, net_income_of_operations_usd, income_receipts_usd) %>% # select only necessary columns
-  left_join(county_data, by = "fips") %>% # join county metadata
-  mutate(yield_bu_per_sqkm = yield_bu_per_acre * 247.105, 
-         area_planted_sqkm = area_planted_acres * (1/247.105)) %>% # change from acres to sqkm) %>% 
-  select(year, state_alpha, county_name_full, fips, region,
-         ag_area_sqkm, county_area_sqkm, county_area_under_ag_percent, crop_type,
-         yield_bu_per_sqkm, area_planted_sqkm, net_income_of_operations_usd, income_receipts_usd) %>%
-  filter(year > 1996) %>%
-  arrange(fips, year) %>% na.omit()
-
-# combine yield, area planted, sales, and expense data
-# merge_data <- rbind(yield_data, area_planted_data, sales_data, expense_data) %>% # NOTE! all dataframes have to have the same columns & column order!
-#   select(-nass_description) %>% # delete this for now
-#   group_by(fips_year) %>%
-#   spread(key = cat_units, value = value_annual) %>% # spread data to format as requested
-#   mutate(fips = str_sub(fips_year, 1, 5),
-#          year = as.numeric(str_sub(fips_year, 7, 10))) %>% # break out fips and year
-#   ungroup(fips_year) %>% # ungroup to prevent errors later
-#   select(fips, year, yield_bu_per_acre, area_planted_acres, 
-#          sales_usd , sales_num_operations,
-#          expenses_num_operations:expenses_usd_per_operation) %>% # select only necessary columns
-#   left_join(county_data, by = "fips") %>% # join county metadata
-#   mutate(yield_bu_per_sqkm = yield_bu_per_acre * 247.105, 
-#          area_planted_sqkm = area_planted_acres * (1/247.105)) %>% # change from acres to sqkm)
-#   select(year, state_alpha, county_name_full, fips, region,
-#          ag_area_sqkm, county_area_sqkm, county_area_under_ag_percent, crop_type,
-#          yield_bu_per_sqkm, area_planted_sqkm,
-#          sales_usd, sales_num_operations,
-#          expenses_usd, expenses_usd_per_operation, expenses_num_operations) #%>% #, expenses_paid_by_landlord_usd, expenses_paid_by_landlord_num_operations)
-#   #na.omit()
-
-# for now left out operations that were owned by landlords and also kept all data (not just ag dominated counties)
-# non-ag dominated counties have NA values for ag_area_sqkm and county_area_sqkm
-
-
-# ---- 5. export nass data ----
-
-# export merged data
-write_csv(merge_data, paste0(tabular_data_output_path, "la_nass_corn_data.csv"))
-
-
-# ---- 6. corn data download funciton ----
-
-get_nass_corn <- function(state) {
-  # nass url
-  nass_url <- "http://quickstats.nass.usda.gov"
+  # define area planted parameters
+  planted_params <- list(commodity_desc = nass_crop,
+                         short_desc = nass_planted_desc,
+                         agg_level_desc = "COUNTY",
+                         source_desc = "SURVEY",
+                         #year__GE = "2000", # years greater than 2000
+                         state_ansi = nass_state_fips, # 2-digit state fips 00 - 99
+                         county_ansi = nass_county_fips) # 3-digit county code 000 - 999
   
-  # commodity description of interest
-  my_commodity_desc <- "CORN" # this is corn for grain (not sillage)
-  my_commodity_desc_net_income <- "INCOME, NET CASH FARM"
-  my_commodity_desc_income <- "INCOME, FARM-RELATED"
+  # define area harvested parameters
+  harvested_params <- list(commodity_desc = nass_crop,
+                           short_desc = nass_harvested_desc,
+                           domain_desc = "TOTAL",
+                           agg_level_desc = "COUNTY",
+                           source_desc = "SURVEY",
+                           #year__GE = "2000", # years greater than 2000
+                           state_ansi = nass_state_fips, # 2-digit state fips 00 - 99
+                           county_ansi = nass_county_fips) # 3-digit county code 000 - 999
   
-  # state of interest
-  my_state <- state
+  # define net income parameters
+  net_income_params <- list(short_desc = "INCOME, NET CASH FARM, OF OPERATIONS - NET INCOME, MEASURED IN $",
+                            domain_desc = "TOTAL",
+                            agg_level_desc = "COUNTY",
+                            #year__GE = "2000", # years greater than 2000
+                            state_ansi = nass_state_fips, # 2-digit state fips 00 - 99
+                            county_ansi = nass_county_fips) # 3-digit county code 000 - 999
   
-  # aggregation level of interest
-  my_agg_level <- "COUNTY"
+  # define income parameters
+  income_params <- list(short_desc = "INCOME, FARM-RELATED - RECEIPTS, MEASURED IN $",
+                        domain_desc = "TOTAL",
+                        agg_level_desc = "COUNTY",
+                        #year__GE = "2000", # years greater than 2000
+                        state_ansi = nass_state_fips, # 2-digit state fips 00 - 99
+                        county_ansi = nass_county_fips) # 3-digit county code 000 - 999
   
-  # final path string
-  api_path_crop <- paste0("api/api_GET/?key=", nass_key, "&commodity_desc=", my_commodity_desc, "&state_alpha=", my_state) # for all years
-  api_path_net_income <- paste0("api/api_GET/?key=", nass_key, "&commodity_desc=", my_commodity_desc_net_income, "&state_alpha=", my_state, "&agg_level_desc=", my_agg_level) # for all years
-  api_path_income <- paste0("api/api_GET/?key=", nass_key, "&commodity_desc=", my_commodity_desc_income, "&state_alpha=", my_state, "&agg_level_desc=", my_agg_level) # for all years
+  # get record counts
+  yield_count <- nassqs_record_count(yield_params) %>% as.numeric()
+  planted_count <- nassqs_record_count(planted_params) %>% as.numeric()
+  harvested_count <- nassqs_record_count(harvested_params) %>% as.numeric()
+  net_income_count <- nassqs_record_count(net_income_params) %>% as.numeric()
+  income_data_raw <- nassqs_record_count(income_params) %>% as.numeric()
   
-  # get raw data
-  raw_data_crop <- GET(url = nass_url, path = api_path_crop)
-  raw_data_net_income <- GET(url = nass_url, path = api_path_net_income)
-  raw_data_income <- GET(url = nass_url, path = api_path_income)
-  
-  # save status codes
-  temp_status_codes <- c(raw_data_crop$status_code, raw_data_net_income$status_code, raw_data_income$status_code)
-  
-  # convert to character
-  char_raw_data_crop <- rawToChar(raw_data_crop$content)
-  char_raw_data_net_income <- rawToChar(raw_data_net_income$content)
-  char_raw_data_income <- rawToChar(raw_data_income$content)
-  
-  # check query status code. if all are equal to 200, then ok
-  if (length(grep(200, temp_status_codes)) == length(temp_status_codes)) {
+  # if record count is zero for any then skip
+  if (yield_count > 0 & planted_count > 0 & harvested_count > 0 & net_income_count > 0 & income_data_raw > 0) {
     
-    # make into a list
-    list_raw_data_crop <- fromJSON(char_raw_data_crop)
-    list_raw_data_net_income <- fromJSON(char_raw_data_net_income)
-    list_raw_data_income <- fromJSON(char_raw_data_income)
-    
-    # map to data frame
-    raw_data_crop <- pmap_dfr(list_raw_data_crop, rbind)
-    raw_data_net_income <- pmap_dfr(list_raw_data_net_income, rbind)
-    raw_data_income <- pmap_dfr(list_raw_data_income, rbind)
-    
-    # clean up yield, area planted, and sales data
-    crop_data <- raw_data_crop %>%
-      filter(agg_level_desc == "COUNTY") %>% # only want countly level data
-      filter(prodn_practice_desc == "ALL PRODUCTION PRACTICES") %>%
-      mutate(fips = paste0(state_fips_code, county_code),
-             county_name_full = str_to_title(county_name),
-             region = str_to_title(asd_desc),
-             nass_description = str_to_lower(str_replace_all(str_replace_all(str_replace_all(str_remove_all(str_remove_all(short_desc, ","), "-"), "  ", " "), "/", "PER"), " ", "_")),
-             statistic_cat_desc = str_remove_all(str_replace_all(str_to_lower(statisticcat_desc), " ", "_"), ","),
-             units = str_replace_all(str_replace(str_to_lower(unit_desc), "/", "per"), " ", "_"),
-             value_annual = str_trim(Value)) %>% # trim white-space
-      select(fips, county_name_full, region, year, value_annual, statistic_cat_desc, units, nass_description) %>%
+    # download data from each using parameters
+    yield_data_raw <- nassqs(yield_params)
+    planted_data_raw <- nassqs(planted_params)
+    harvested_data_raw <- nassqs(harvested_params)
+    net_income_data_raw <- nassqs(net_income_params)
+    income_data_raw <- nassqs(income_params)
+
+    # reformat yield data
+    yield_data <- yield_data_raw %>%
+      select(year, state_fips = state_ansi, county_fips = county_ansi, short_desc, Value) %>%
+      mutate(fips = paste0(state_fips, county_fips),
+             fips_year = paste0(fips, "_", year),
+             nass_desc = str_to_lower(str_replace_all(str_replace_all(str_replace_all(str_remove_all(str_remove_all(short_desc, ","), "-"), "  ", " "), "/", "PER"), " ", "_")),
+             value_annual = str_trim(Value)) %>%
       filter(value_annual != "(D)" & value_annual != "(Z)") %>% # remove rows without data
-      mutate(value_annual = as.numeric(str_remove_all(value_annual, ","))) %>%
-      filter(county_name_full != "Other (Combined) Counties") # remove un-named counties
-    # in the case that there's no corn data there are 3 unique values for statistic_cat_desc (i.e., sales, area_harvested, production)
-    # in the case that there's corn data there are 6 unique values for statistic_cat_desc (i.e., sales, area_harvested, production, area_planted, area_planted_net, "yield")
+      mutate(value_annual = as.numeric(str_remove_all(value_annual, ",")),
+             nass_desc = recode(nass_desc, "corn_grain_yield_measured_in_bu_per_acre" = "yeild_bu_per_acre")) %>%
+      select(fips_year, value_annual, nass_desc)
     
-    # if yield data exisists, then reformat
-    if (length(grep("yield", unique(crop_data$statistic_cat_desc))) > 0) {
-      # county metadata (join nass county data with ag dominated county_ids dataframe)
-      county_data <- crop_data %>%
-        select(fips:region) %>%
-        distinct() %>%
-        left_join(county_ids, by = "fips")
-      
-      # select and reformat yield data
-      yield_data <- crop_data %>%
-        filter(statistic_cat_desc == "yield" & nass_description == "corn_grain_yield_measured_in_bu_per_acre") %>%
-        mutate(cat_units = paste0(statistic_cat_desc, "_", units),
-               fips_year = paste0(fips, "_", year)) %>%
-        select(fips_year, nass_description, value_annual, cat_units) # select only necessary columns
-      
-      # select and reformat area planted data
-      area_planted_data <- crop_data %>%
-        filter(statistic_cat_desc == "area_planted") %>%
-        mutate(cat_units = paste0(statistic_cat_desc, "_", units),
-               fips_year = paste0(fips, "_", year)) %>%
-        select(fips_year, nass_description, value_annual, cat_units) # select only necessary columns
-      
-      # select and reformat net income data
-      net_income_data <- raw_data_net_income %>% 
-        filter(short_desc == "INCOME, NET CASH FARM, OF OPERATIONS - NET INCOME, MEASURED IN $") %>% 
-        filter(domaincat_desc == "NOT SPECIFIED") %>%
-        mutate(fips = paste0(state_fips_code, county_code),
-               statistic_cat_desc = str_replace(str_to_lower(statisticcat_desc), " ", "_"),
-               class_desc_short = str_to_lower(str_replace_all(str_replace(class_desc, ",", ""), " ", "_")),
-               cat_units = paste0(statistic_cat_desc, "_", class_desc_short, "_", unit_desc),
-               nass_description = paste0(statistic_cat_desc, "_", class_desc_short),
-               value_annual = str_trim(Value)) %>%
-        select(fips, year, nass_description, value_annual, cat_units) %>%
-        filter(value_annual != "(D)" & value_annual != "(Z)") %>% # remove rows without data
-        mutate(fips_year = paste0(fips, "_", year),
-               value_annual = as.numeric(str_remove_all(value_annual, ","))) %>%
-        mutate(cat_units = recode(cat_units, "net_income_of_operations_$" = "net_income_of_operations_usd")) %>%
-        select(fips_year, nass_description, value_annual, cat_units)
-      
-      # select and reformat income data
-      income_data <- raw_data_income %>% 
-        filter(short_desc == "INCOME, FARM-RELATED - RECEIPTS, MEASURED IN $") %>% 
-        filter(domaincat_desc == "NOT SPECIFIED") %>%
-        mutate(fips = paste0(state_fips_code, county_code),
-               statistic_cat_desc = str_to_lower(statisticcat_desc),
-               cat_units = paste0(str_to_lower(group_desc), "_", statistic_cat_desc, "_", unit_desc),
-               nass_description = paste0(str_to_lower(group_desc), "_", statistic_cat_desc),
-               value_annual = str_trim(Value)) %>%
-        select(fips, year, nass_description, value_annual, cat_units) %>%
-        filter(value_annual != "(D)" & value_annual != "(Z)") %>% # remove rows without data
-        mutate(fips_year = paste0(fips, "_", year),
-               value_annual = as.numeric(str_remove_all(value_annual, ","))) %>%
-        mutate(cat_units = recode(cat_units, "income_receipts_$" = "income_receipts_usd")) %>%
-        select(fips_year, nass_description, value_annual, cat_units)
-      
-      # combine yield, area planted, net income, and income receipts data
-      merge_data <- rbind(yield_data, area_planted_data, net_income_data, income_data) %>% # NOTE! all dataframes have to have the same columns & column order!
-        select(-nass_description) %>% # delete this for now
-        group_by(fips_year) %>%
-        spread(key = cat_units, value = value_annual) %>% # spread data to format as requested
-        mutate(fips = str_sub(fips_year, 1, 5),
-               year = as.numeric(str_sub(fips_year, 7, 10)), # break out fips and year
-               crop_type = str_to_lower(my_commodity_desc)) %>%
-        ungroup(fips_year) %>% # ungroup to prevent errors later
-        select(fips, year, crop_type, yield_bu_per_acre, area_planted_acres, net_income_of_operations_usd, income_receipts_usd) %>% # select only necessary columns
-        left_join(county_data, by = "fips") %>% # join county metadata
-        mutate(yield_bu_per_sqkm = yield_bu_per_acre * 247.105, 
-               area_planted_sqkm = area_planted_acres * (1/247.105)) %>% # change from acres to sqkm) %>% 
-        select(year, state_alpha, county_name_full, fips, region,
-               ag_area_sqkm, county_area_sqkm, county_area_under_ag_percent, crop_type,
-               yield_bu_per_sqkm, area_planted_sqkm, net_income_of_operations_usd, income_receipts_usd) %>%
-        filter(year > 1996) %>%
-        arrange(fips, year) %>% na.omit()
-      
-      # return merged data
-      return(merge_data)
-    }
+    # reformat area planted data
+    planted_data <- planted_data_raw %>%
+      select(year, state_fips = state_ansi, county_fips = county_ansi, short_desc, Value) %>%
+      mutate(fips = paste0(state_fips, county_fips),
+             fips_year = paste0(fips, "_", year),
+             nass_desc = str_to_lower(str_replace_all(str_replace_all(str_replace_all(str_remove_all(str_remove_all(short_desc, ","), "-"), "  ", " "), "/", "PER"), " ", "_")),
+             value_annual = str_trim(Value)) %>%
+      filter(value_annual != "(D)" & value_annual != "(Z)") %>% # remove rows without data
+      mutate(value_annual = as.numeric(str_remove_all(value_annual, ",")),
+             nass_desc = recode(nass_desc, "corn_acres_planted" = "area_planted_acres")) %>%
+      select(fips_year, value_annual, nass_desc)
     
-    # if yield data doesn't exist, then return empty data frame
-    else {
-      merge_data <- data.frame()
-      
-      # return empty merged data
-      return(merge_data)
-    }
+    # reformat area harvested data
+    harvested_data <- harvested_data_raw %>%
+      select(year, state_fips = state_ansi, county_fips = county_ansi, short_desc, Value) %>%
+      mutate(fips = paste0(state_fips, county_fips),
+             fips_year = paste0(fips, "_", year),
+             nass_desc = str_to_lower(str_replace_all(str_replace_all(str_replace_all(str_remove_all(str_remove_all(short_desc, ","), "-"), "  ", " "), "/", "PER"), " ", "_")),
+             value_annual = str_trim(Value)) %>%
+      filter(value_annual != "(D)" & value_annual != "(Z)") %>% # remove rows without data
+      mutate(value_annual = as.numeric(str_remove_all(value_annual, ",")),
+             nass_desc = recode(nass_desc, "corn_grain_acres_harvested" = "area_harvested_acres")) %>%
+      select(fips_year, value_annual, nass_desc)
+    
+    # reformat net income data
+    net_income_data <- net_income_data_raw %>%
+      select(year, state_fips = state_ansi, county_fips = county_ansi, short_desc, Value) %>%
+      mutate(fips = paste0(state_fips, county_fips),
+             fips_year = paste0(fips, "_", year),
+             nass_desc = str_to_lower(str_replace_all(str_replace_all(str_replace_all(str_remove_all(str_remove_all(short_desc, ","), "-"), "  ", " "), "/", "PER"), " ", "_")),
+             value_annual = str_trim(Value)) %>%
+      filter(value_annual != "(D)" & value_annual != "(Z)") %>% # remove rows without data
+      mutate(value_annual = as.numeric(str_remove_all(value_annual, ",")),
+             nass_desc = recode(nass_desc, "income_net_cash_farm_of_operations_net_income_measured_in_$" = "net_income_farm_ops_usd")) %>%
+      select(fips_year, value_annual, nass_desc)
+    
+    # reformat income data
+    income_data <- income_data_raw %>%
+      select(year, state_fips = state_ansi, county_fips = county_ansi, short_desc, Value) %>%
+      mutate(fips = paste0(state_fips, county_fips),
+             fips_year = paste0(fips, "_", year),
+             nass_desc = str_to_lower(str_replace_all(str_replace_all(str_replace_all(str_remove_all(str_remove_all(short_desc, ","), "-"), "  ", " "), "/", "PER"), " ", "_")),
+             value_annual = str_trim(Value)) %>%
+      filter(value_annual != "(D)" & value_annual != "(Z)") %>% # remove rows without data
+      mutate(value_annual = as.numeric(str_remove_all(value_annual, ",")),
+             nass_desc = recode(nass_desc, "income_farmrelated_receipts_measured_in_$" = "income_farm_receipts_usd")) %>%
+      select(fips_year, value_annual, nass_desc)
+    
+    # combine yield, area planted, net income, and income receipts data
+    merge_data <- rbind(yield_data, planted_data, harvested_data, net_income_data, income_data) %>% # NOTE! all dataframes have to have the same columns & column order!
+      group_by(fips_year) %>%
+      spread(key = nass_desc, value = value_annual) %>% # spread data to format as requested
+      mutate(fips = str_sub(fips_year, 1, 5),
+             year = as.numeric(str_sub(fips_year, 7, 10)), # break out fips and year
+             crop_type = nass_crop_full) %>%
+      ungroup(fips_year) %>% # ungroup to prevent errors later
+      select(fips, year, crop_type, yeild_bu_per_acre, area_planted_acres, area_harvested_acres, net_income_farm_ops_usd, income_farm_receipts_usd) %>% # select only necessary columns
+      mutate(yield_bu_per_sqkm = yeild_bu_per_acre * 247.105, # change from bu per acres to bu per sqkm)
+             area_planted_sqkm = area_planted_acres * (1/247.105), # change from acres to sqkm)
+             area_harvested_sqkm = area_harvested_acres * (1/247.105)) %>% # change from acres to sqkm)
+      select(year, fips, yield_bu_per_sqkm, area_planted_sqkm, area_harvested_sqkm, net_income_farm_ops_usd, income_farm_receipts_usd, crop_type) %>%
+      filter(year > 1996) %>%
+      arrange(year) %>% na.omit()
+    
+    # return merged data
+    return(merge_data)
+  }
+
+  # if greater than nass_limit will get error so return empty list
+  else if(yield_count > nass_limit & planted_count > nass_limit & harvested_count > nass_limit & net_income_count > nass_limit & income_data_raw > nass_limit) {
+    
+    # if data doesn't exist, then return empty data frame
+    merge_data <- data.frame()
+    
+    # return empty merged data
+    return(merge_data)
   }
   
-  # if all are not equal to 200, then there's an issue! (413 = query too big)
+  # if no data to return then give empty list
   else {
     
-    # save status codes as merged data frame
-    merge_data <- data.frame(state_alpha = my_state, 
-                             crop_status_code = temp_status_codes[1],
-                             net_income_status_code = temp_status_codes[2],
-                             income_status_code = temp_status_codes[3])
+    # if data doesn't exist, then return empty data frame
+    merge_data <- data.frame()
     
-    # return merged data frame with one row
+    # return empty merged data
     return(merge_data)
   }
 }
 
 
-# ---- 7. corn function in action ----
+# ---- 4. using get_nass_data function ----
 
-# all 50 states (list)
-# my_conus_state_list <- data.frame(state_alpha = state.abb) %>%
-#   filter(state_alpha != "AK" & state_alpha != "HI")
+# make empty dataframe to hold all the data
+nass_data <- data.frame(year = numeric(),
+                        fips = character(),
+                        yield_bu_per_sqkm = numeric(),
+                        area_planted_sqkm = numeric(),
+                        area_harvested_sqkm = numeric(),
+                        net_income_farm_ops_usd = numeric(),
+                        income_farm_receipts_usd = numeric(),
+                        crop_type = character())
 
-# states of interest for gw-food-nexus project
-my_sel_conus_state_list <- county_ids %>% # see code section 2. for county_ids
-  select(state_alpha) %>%
-  distinct() %>%
-  arrange(state_alpha)
-# 33 unique states identified (out of 48 conus states)
+# define nass variables
+my_crop = "CORN" # from nass
+my_crop_full = "corn_grain"
+my_yield_desc = "CORN, GRAIN - YIELD, MEASURED IN BU / ACRE" # from nass, depends on crop
+my_planted_desc = "CORN - ACRES PLANTED" # from nass, depends on crop
+my_harvested_desc = "CORN, GRAIN - ACRES HARVESTED"  # from nass, depends on crop
 
-# loop
-for (i in 1:length(my_sel_conus_state_list$state_alpha)) {
+# loop (will take a bit of time to run)
+# this will give some coersion errors but thats ok!
+for (i in 1:dim(county_ids)[1]) {
   
-  # call a state
-  temp_state <- my_sel_conus_state_list$state_alpha[i]
+  # define a state and county
+  temp_state_fips <- county_ids$state_fips[i]
+  temp_county_fips <- county_ids$county_fips[i]
   
   # get data
-  temp_data <- get_nass_corn(temp_state)
+  temp_data <- gwn_get_nass_data(nass_state_fips = temp_state_fips, 
+                                 nass_county_fips = temp_county_fips,
+                                 nass_crop = my_crop,
+                                 nass_crop_full = my_crop_full,
+                                 nass_yield_desc = my_yield_desc,
+                                 nass_planted_desc = my_planted_desc,
+                                 nass_harvested_desc = my_harvested_desc)
   
   # only export if there's data
   if (dim(temp_data)[1] > 1) {
     
+    # add to nass_data
+    nass_data <- bind_rows(nass_data, temp_data)
     # export data
-    write_csv(temp_data, paste0(tabular_data_output_path, "nass_data_", str_to_lower(temp_state), "_corn.csv"))
+    # write_csv(temp_data, paste0(tabular_data_output_path, str_to_lower(my_crop), "_", county_ids$state_alpha[i], "_", my_fips_list$fips[i],".csv"))
   }
   
-  # if there's an error, also save status codes
-  else if (dim(temp_data)[1] == 1) {
+  else {
+    # create empty temp_data
+    temp_data <- data.frame(year = numeric(),
+                            fips = character(),
+                            yield_bu_per_sqkm = numeric(),
+                            area_planted_sqkm = numeric(),
+                            area_harvested_sqkm = numeric(),
+                            net_income_farm_ops_usd = numeric(),
+                            income_farm_receipts_usd = numeric(),
+                            crop_type = character())
     
-    # export data
-    write_csv(temp_data, paste0(tabular_data_output_path, "nass_data_", str_to_lower(temp_state), "_corn.csv"))
+    # add rows
+    temp_data_fill <- add_row(temp_data, 
+                              fips = paste0(temp_state_fips, temp_county_fips),
+                              crop_type = my_crop_full)
+    
+    # add to nass_data
+    nass_data <- bind_rows(nass_data, temp_data_fill)
+    
+    # export (no) data
+    # write_csv(temp_data, paste0(tabular_data_output_path, str_to_lower(my_crop), "_", county_ids$state_alpha[i], "_", my_fips_list$fips[i],"_nodata.csv"))
   }
-  
-  # if dim(temp_data)[1] == 0 then don't save anything
 }
 
+# check, there should be 1030 unique counties
+length(unique(nass_data$fips))
+# checks!
 
-# ---- 8. merge all datasets together ----
+# join with county_ids
+# need to join
+# nass_data_join <- nass_data %>%
+#   left_join(county_ids, by = "fips") %>%
+#   select(year, fips, state_alpha, state_fips, county_fips:county_area_under_ag_percent, 
+#          yield_bu_per_sqkm:income_farm_receipts_usd, crop_type)
+# do this in a later script
 
-# read files in folder
-nass_files <- list.files(path = tabular_data_output_path)
-nass_file_paths <- paste0(tabular_data_output_path, nass_files)
-nass_file_sizes <- purrr::map_dbl(nass_file_paths, file.size)
+# export data
+write_csv(nass_data, paste0(tabular_data_output_path, "nass_data_corn.csv"))
+# NA values here represent no data
 
-nass_file_data <- data.frame(file_name = as.character(nass_files),
-                             file_path = as.character(paste0(tabular_data_output_path, nass_files)),
-                             file_size_bytes = as.numeric(nass_file_sizes))
 
-# select files bigger than 86 bytes to merge
-nass_sel_file_data <- nass_file_data %>%
-  filter(file_size_bytes > 86)
-# for data files that are 86 bytes - these ones the query was too big (status code = 413)
-nass_sel_file_paths <- as.vector(nass_sel_file_data$file_path)
-
+# test
+# devtools::install_github("ropensci/rnassqs")
+# library(rnassqs)
 # 
-blah <- purrr::map(nass_sel_file_paths, blah_function) %>%
-  unlist() %>%
-  bind_rows()
+# query1 <- nassqs_param_values(param = "commodity_desc", 
+#                               agg_level_desc = "COUNTY",
+#                               source_desc = "SURVEY",
+#                               year = "2017",
+#                               county_code = "53077") # gives 400 error
+# 
+# query2 <- nassqs_param_values(param = "commodity_desc", 
+#                               agg_level_desc = "COUNTY",
+#                               source_desc = "SURVEY",
+#                               year = "2017",
+#                               state_ansi = "53",
+#                               county_ansi = "077") # runs but doesn't return anything
+# 
+# my_params3 <- list(commodity_desc = "CORN",
+#                    agg_level_desc = "COUNTY",
+#                    source_desc = "SURVEY",
+#                    year = "2017",
+#                    county_code = "53077")
+# my_params4 <- list(commodity_desc = "CORN",
+#                    agg_level_desc = "COUNTY",
+#                    source_desc = "SURVEY",
+#                    year = "2017",
+#                    state_ansi = "53",
+#                    county_ansi = "077")
+# query3 <- nassqs(my_params3) # gives 400 error
+# query4 <- nassqs(my_params4) # works, 4 observations
   
-blah_function <- function(file_path) {
   
-  my_df <- read_csv(file_path)
   
-  return(my_df)
-}
-
-# ---- x. extra code ----
-# select and reformat area harvested data
-corn_area_harvested_data <- corn_data %>%
-  filter(statisticcat_desc_full == "area_harvested") %>%
-  filter(unit_desc_full == "acres") %>% # don't want # operations
-  mutate(area_harvested_acres = value_annual) %>% # consolidate
-  select(fips:year, area_harvested_acres)
-
-# other potential datasets (corn sales and production)
-corn_sales_data <- corn_data %>%
-  filter(statisticcat_desc_full == "sales") %>%
-  filter(unit_desc_full == "$")
-
-corn_production_data <- corn_data %>%
-  filter(statisticcat_desc_full == "production")
-
-
-# ---- x. to do: ----
-# make function and for loop for multiple states
