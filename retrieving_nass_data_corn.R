@@ -318,32 +318,40 @@ write_csv(nass_data, paste0(tabular_data_output_path, "nass_data_corn.csv"))
 # devtools::install_github("ropensci/rnassqs")
 # library(rnassqs)
 # 
-# query1 <- nassqs_param_values(param = "commodity_desc", 
-#                               agg_level_desc = "COUNTY",
-#                               source_desc = "SURVEY",
-#                               year = "2017",
-#                               county_code = "53077") # gives 400 error
-# 
-# query2 <- nassqs_param_values(param = "commodity_desc", 
-#                               agg_level_desc = "COUNTY",
-#                               source_desc = "SURVEY",
-#                               year = "2017",
-#                               state_ansi = "53",
-#                               county_ansi = "077") # runs but doesn't return anything
-# 
-# my_params3 <- list(commodity_desc = "CORN",
-#                    agg_level_desc = "COUNTY",
-#                    source_desc = "SURVEY",
-#                    year = "2017",
-#                    county_code = "53077")
-# my_params4 <- list(commodity_desc = "CORN",
-#                    agg_level_desc = "COUNTY",
-#                    source_desc = "SURVEY",
-#                    year = "2017",
-#                    state_ansi = "53",
-#                    county_ansi = "077")
-# query3 <- nassqs(my_params3) # gives 400 error
-# query4 <- nassqs(my_params4) # works, 4 observations
+nassqs_param_values(param = "commodity_desc",
+                    agg_level_desc = "COUNTY",
+                    source_desc = "SURVEY",
+                    year = "2017",
+                    county_code = "53077") # gives 400 error
+
+nassqs_param_values(param = "commodity_desc",
+                    agg_level_desc = "COUNTY",
+                    source_desc = "SURVEY",
+                    year = "2017",
+                    state_ansi = "53",
+                    county_ansi = "077") # runs but doesn't return anything
+
+my_params3 <- list(commodity_desc = "CORN",
+                   agg_level_desc = "COUNTY",
+                   source_desc = "SURVEY",
+                   year = "2017",
+                   county_code = "53077")
+my_params4 <- list(commodity_desc = "CORN",
+                   agg_level_desc = "COUNTY",
+                   source_desc = "SURVEY",
+                   year = "2017",
+                   state_ansi = "53",
+                   county_ansi = "077")
+query3 <- nassqs(my_params3) # gives 400 error
+query4 <- nassqs(my_params4) # works, 4 observations
   
   
-  
+devtools::install_github("ropensci/rnassqs@master", force = TRUE)
+blah <- rnassqs::nassqs_param_values("county_code", 
+                                     sector_desc = "DEMOGRAPHICS", 
+                                     group_desc = "EXPENSES", 
+                                     year = 2012, 
+                                     state_alpha = "WA", 
+                                     agg_level_desc = "COUNTY")[1:2]
+# Outputs:
+# [1] "001" "005"
