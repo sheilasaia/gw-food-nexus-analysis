@@ -49,34 +49,134 @@ county_ids <- county_ids_raw %>%
 
 # ---- 3. get ghcnd data ----
 
-# select county
+# get all the stations (just do this once)
+all_stations_raw <- ghcnd_stations()
+
+# reformatted all stations 
+all_stations <- all_stations_raw %>%
+  mutate(station_id = id) %>%
+  select(-id) %>%
+  mutate(id = paste0("GHCND:", station_id)) %>%
+  select(id, station_id, state, gsn_flag, wmo_id, element, first_year, last_year)
+# change so id column matches output from ncdc_stations()
+
+# (loop should start here)
+# select county (i)
 temp_county_id <- paste0("FIPS:", county_ids$fips[1])
 
 # look up stations in county
-temp_stations <- ncdc_stations(datasetid = 'GHCND', locationid = temp_county_id)
+temp_county_stations <- ncdc_stations(datasetid = 'GHCND', locationid = temp_county_id)
 
 # reformat list
 current_year <- 2019
-record_length_min_years <- 10 # change this to get longer 
-temp_stations_list <- temp_stations$data %>%
+record_length_min_years <- 10 # change this to get longer
+temp_county_stations_list <- temp_county_stations$data %>%
   select(id, name, latitude, longitude, elevation, elevation_unit = elevationUnit, mindate, maxdate, data_coverage = datacoverage) %>%
   mutate(min_date = ymd(mindate),
          max_date = ymd(maxdate),
          record_length_years = year(max_date) - year(min_date),
-         gage_activity = ifelse(year(max_date) == year_now & current_year >= record_length_min_years,
+         gage_activity = ifelse(year(max_date) == current_year & record_length_years >= record_length_min_years,
                               "active", "inactive")) %>%
   select(-mindate, -maxdate)
 
-# select active gages
-temp_active_stations <- temp_stations_list %>%
+# select active gages with precipitation (daily total) and temperature (daily average) data
+temp_county_active_stations <- temp_county_stations_list %>%
   filter(gage_activity == "active") %>%
   select(-gage_activity) %>%
-  mutate(station_id = str_sub(id, start = 7))
+  mutate(station_id = str_sub(id, start = 7)) %>%
+  left_join(all_stations, by = c("id", "station_id")) %>%
+  filter(element == "PRCP" | element == "TAVG")
+
+# active temperature stations
+temp_tavg_stations <- temp_county_active_stations %>%
+  filter(element == "TAVG")
+
+# check length of both (have to be > 0)
+# need to loop through each of temp_tavg_stations (j)
+# select temperature data station to download
+temp_sel_tavg_station <- temp_tavg_stations$station_id
+
+# get temperature data
+temp_tavg_data_raw <- ghcnd(temp_sel_tavg_station, var = "TAVG") %>% # will grab all the data from ghcnd
+  filter(element == "TAVG") %>%
+  select(-element)
+
+# reformat temperature (very untidy IMO) data
+temp_tavg_value_data <- temp_tavg_data_raw %>%
+  group_by(id, year, month) %>%
+  pivot_longer(cols = starts_with("VALUE"), names_to = "raw_col_name", values_to = "tavg_tenth_degc") %>%
+  select(id, year, month, raw_col_name, tavg_tenth_degc) %>%
+  ungroup() %>%
+  mutate(tavg_degc = tavg_tenth_degc * 0.1,
+         year_text = str_trim(as.character(year), side = "both"),
+         month_text = str_trim(as.character(month), side = "both"),
+         day_text = str_trim(str_sub(raw_col_name, start = 6), side = "both"),
+         date = lubridate::ymd(paste0(year_text, "-", month_text, "-", day_text))) %>% 
+  filter(!is.na(date)) %>% # warning comes from dates that don't actually exist (i.e., 2/31/2007) so remove with filter
+  select(id, date, year_text, tavg_degc)
+
+# check quality codes
+# quality code descriptions: https://www1.ncdc.noaa.gov/pub/data/ghcn/daily/readme.txt
+temp_tavg_good_quality_dates <- temp_tavg_data_raw %>%
+  group_by(id, year, month) %>%
+  pivot_longer(cols = starts_with("QFLAG"), names_to = "raw_col_name", values_to = "quality_flag") %>%
+  select(id, year, month, raw_col_name, quality_flag) %>%
+  ungroup() %>%
+  mutate(row_num = seq(1, 6758, by = 1),
+         flag = str_trim(quality_flag, side = "both"),
+         year_text = str_trim(as.character(year), side = "both"),
+         month_text = str_trim(as.character(month), side = "both"),
+         day_text = str_trim(str_sub(raw_col_name, start = 6), side = "both"),
+         date = lubridate::ymd(paste0(year_text, "-", month_text, "-", day_text))) %>% 
+  filter(!is.na(date)) %>%
+  select(date, flag) %>%
+  filter(str_length(flag) == 0) %>% # filter out dates where there's a flag (flags indicate issue with data reporting)
+  select(date)
+
+# keep temperature data that are good quality
+temp_tavg_data <- temp_tavg_value_data %>%
+  right_join(temp_tavg_good_quality_dates, by = "date")
+
+# find annual averages
+temp_tavg_annual_data <- temp_tavg_data %>%
+  group_by(id, year_text) %>%
+  summarize(tavg_annual_degc = mean(tavg_degc, na.rm = TRUE)) %>%
+  mutate(tavg_annual_degf = tavg_annual_degc * (9/5) + 32)
+
+
+# precip stations
+temp_precip_stations <- temp_county_active_stations %>%
+  filter(element == "PRCP")
 
 # TO DO: get daily data for active stations that have both daily precip and avg temp
 my_stations_short <- temp_active_stations$station_id
 my_stations_long <- temp_active_stations$id
-blah <- ghcnd(my_station_short, var = c("PRCP", "TAVG")) # daily values in tenths of mm and deg C
+
+
+# to do
+# average all gages 
+# take data before 1990
+# annual total precip
+
+
+
+
+blah <- ghcnd(my_stations_short, var = c("PRCP", "TAVG")) # daily values in tenths of mm and deg C
 # variables: https://www1.ncdc.noaa.gov/pub/data/ghcn/daily/readme.txt
 blah2 <- ncdc_datacats(datasetid = "GHCND", stationid = my_stations_long)
 blah3 <- ghcnd_stations() # lookup want elements = PRCP and TAVG
+blah4 <- blah3 %>%
+  mutate(station_id = id) %>%
+  select(-id) %>%
+  right_join(temp_active_stations, by = "station_id") %>%
+  select(station_id, element) %>%
+  filter(element == "TAVG" | element == "PRCP")
+# only one has TAVG and several have PRCP
+blah4_stations_tavg <- blah4 %>%
+  filter(element == "TAVG")
+# need an if statement to check that number of stations is > 0
+temp_tavg_data <- ghcnd(blah4_stations_tavg$station_id, var = "TAVG") %>%
+  filter(element == "TAVG")
+# https://www1.ncdc.noaa.gov/pub/data/ghcn/daily/readme.txt
+# value1 is the value for the first day of the month...
+# who's idea was it to do that...??!? sheesh.
