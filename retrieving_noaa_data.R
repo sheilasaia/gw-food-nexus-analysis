@@ -122,8 +122,7 @@ temp_tavg_good_quality_dates <- temp_tavg_data_raw %>%
   pivot_longer(cols = starts_with("QFLAG"), names_to = "raw_col_name", values_to = "quality_flag") %>%
   select(id, year, month, raw_col_name, quality_flag) %>%
   ungroup() %>%
-  mutate(row_num = seq(1, 6758, by = 1),
-         flag = str_trim(quality_flag, side = "both"),
+  mutate(flag = str_trim(quality_flag, side = "both"),
          year_text = str_trim(as.character(year), side = "both"),
          month_text = str_trim(as.character(month), side = "both"),
          day_text = str_trim(str_sub(raw_col_name, start = 6), side = "both"),
@@ -137,8 +136,16 @@ temp_tavg_good_quality_dates <- temp_tavg_data_raw %>%
 temp_tavg_data <- temp_tavg_value_data %>%
   right_join(temp_tavg_good_quality_dates, by = "date")
 
-# find annual averages
+# define bounds to check that we have full years
+temp_tavg_year_check <- temp_tavg_data %>%
+  count(year_text) %>%
+  mutate(percent_complete = (n / 365) * 100) %>%
+  filter(percent_complete >= 90) %>% # filter out years that are less than 90% complete
+  select(year_text)
+
+# delete incomplete years and find annual averages
 temp_tavg_annual_data <- temp_tavg_data %>%
+  filter(year_text %in% temp_tavg_year_check$year_text) %>%
   group_by(id, year_text) %>%
   summarize(tavg_annual_degc = mean(tavg_degc, na.rm = TRUE)) %>%
   mutate(tavg_annual_degf = tavg_annual_degc * (9/5) + 32)
@@ -148,35 +155,64 @@ temp_tavg_annual_data <- temp_tavg_data %>%
 temp_precip_stations <- temp_county_active_stations %>%
   filter(element == "PRCP")
 
-# TO DO: get daily data for active stations that have both daily precip and avg temp
-my_stations_short <- temp_active_stations$station_id
-my_stations_long <- temp_active_stations$id
+# check length of both (have to be > 0)
+# need to loop through each of temp_precip_stations (j)
+# select precipitation data station to download
+temp_sel_precip_station <- temp_precip_stations$station_id[1]
 
+# get precipitation data
+temp_precip_data_raw <- ghcnd(temp_sel_precip_station, var = "PRCP") %>% # will grab all the data from ghcnd
+  filter(element == "PRCP") %>%
+  select(-element)
 
-# to do
-# average all gages 
-# take data before 1990
-# annual total precip
+# reformat precipitation (very untidy IMO) data
+temp_precip_value_data <- temp_precip_data_raw %>%
+  group_by(id, year, month) %>%
+  pivot_longer(cols = starts_with("VALUE"), names_to = "raw_col_name", values_to = "precip_tenth_mm") %>%
+  select(id, year, month, raw_col_name, precip_tenth_mm) %>%
+  ungroup() %>%
+  mutate(precip_mm = precip_tenth_mm * 0.1,
+         year_text = str_trim(as.character(year), side = "both"),
+         month_text = str_trim(as.character(month), side = "both"),
+         day_text = str_trim(str_sub(raw_col_name, start = 6), side = "both"),
+         date = lubridate::ymd(paste0(year_text, "-", month_text, "-", day_text))) %>% 
+  filter(!is.na(date)) %>% # warning comes from dates that don't actually exist (i.e., 2/31/2007) so remove with filter
+  select(id, date, year_text, precip_mm)
 
+# check quality codes
+# quality code descriptions: https://www1.ncdc.noaa.gov/pub/data/ghcn/daily/readme.txt
+temp_precip_good_quality_dates <- temp_precip_data_raw %>%
+  group_by(id, year, month) %>%
+  pivot_longer(cols = starts_with("QFLAG"), names_to = "raw_col_name", values_to = "quality_flag") %>%
+  select(id, year, month, raw_col_name, quality_flag) %>%
+  ungroup() %>%
+  mutate(flag = str_trim(quality_flag, side = "both"),
+         year_text = str_trim(as.character(year), side = "both"),
+         month_text = str_trim(as.character(month), side = "both"),
+         day_text = str_trim(str_sub(raw_col_name, start = 6), side = "both"),
+         date = lubridate::ymd(paste0(year_text, "-", month_text, "-", day_text))) %>% 
+  filter(!is.na(date)) %>%
+  select(date, flag) %>%
+  filter(str_length(flag) == 0) %>% # filter out dates where there's a flag (flags indicate issue with data reporting)
+  select(date)
 
+# keep precipitation data that are good quality
+temp_precip_data <- temp_precip_value_data %>%
+  right_join(temp_precip_good_quality_dates, by = "date")
 
+# define bounds to check that we have full years
+temp_precip_year_check <- temp_precip_data %>%
+  count(year_text) %>%
+  mutate(percent_complete = (n / 365) * 100) %>%
+  filter(percent_complete >= 90) %>% # filter out years that are less than 90% complete
+  select(year_text)
 
-blah <- ghcnd(my_stations_short, var = c("PRCP", "TAVG")) # daily values in tenths of mm and deg C
-# variables: https://www1.ncdc.noaa.gov/pub/data/ghcn/daily/readme.txt
-blah2 <- ncdc_datacats(datasetid = "GHCND", stationid = my_stations_long)
-blah3 <- ghcnd_stations() # lookup want elements = PRCP and TAVG
-blah4 <- blah3 %>%
-  mutate(station_id = id) %>%
-  select(-id) %>%
-  right_join(temp_active_stations, by = "station_id") %>%
-  select(station_id, element) %>%
-  filter(element == "TAVG" | element == "PRCP")
-# only one has TAVG and several have PRCP
-blah4_stations_tavg <- blah4 %>%
-  filter(element == "TAVG")
-# need an if statement to check that number of stations is > 0
-temp_tavg_data <- ghcnd(blah4_stations_tavg$station_id, var = "TAVG") %>%
-  filter(element == "TAVG")
-# https://www1.ncdc.noaa.gov/pub/data/ghcn/daily/readme.txt
-# value1 is the value for the first day of the month...
-# who's idea was it to do that...??!? sheesh.
+# delete incomplete years and find annual averages
+temp_precip_annual_data <- temp_precip_data %>%
+  filter(year_text %in% temp_tavg_year_check$year_text) %>%
+  group_by(id, year_text) %>%
+  summarize(precip_annual_mm = sum(precip_mm, na.rm = TRUE))
+
+# TO DOs
+# loop through all gages
+# data after 1990
