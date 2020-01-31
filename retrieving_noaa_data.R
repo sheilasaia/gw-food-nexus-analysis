@@ -232,12 +232,9 @@ for (i in 1:dim(county_ids)[1]) {
   noaa_annual_data <- bind_rows(temp_noaa_annual_data, noaa_annual_data)
   
 }
-
-    
     
   
-  
-  # ---- 4. export ----
+# ---- 4. export ----
   
   # join with county id info
   
