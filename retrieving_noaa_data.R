@@ -105,14 +105,14 @@ for (i in 1:dim(county_ids)[1]) {
     select(-gage_activity) %>%
     mutate(station_id = str_sub(id, start = 7)) %>%
     left_join(all_stations, by = c("id", "station_id")) %>%
-    filter(element == "PRCP" | element == "TAVG") %>%
+    filter(element == "PRCP" | element == "TAVG" | element == "TMIN" | element == "TMAX") %>%
     mutate(first_wy = year(min_wy_date) + 1, # add one to buffer
            last_wy = year(max_wy_date) - 1) # subract one to buffer
   # TODO can make this this buffer more specific in future
   
   # active temperature stations
   temp_tavg_stations <- temp_county_active_stations %>%
-    filter(element == "TAVG")
+    filter(element == "TAVG" | element == "TMIN" | element == "TMAX")
   
   # active precipitation stations
   temp_prcp_stations <- temp_county_active_stations %>%
@@ -165,7 +165,8 @@ for (i in 1:dim(county_ids)[1]) {
       mutate(fips = temp_county_id_short) %>%
       select(fips, noaa_station_list, noaa_station_count, water_year:value)
     
-  } 
+  }
+  
   
   # make an empty data frame
   else {
