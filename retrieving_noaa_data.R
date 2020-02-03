@@ -246,16 +246,23 @@ for (i in 1:dim(county_ids)[1]) {
   
 }
     
+# TODO there are several sites without tavg available
 
 # ---- 4. final wrangling ----
 
-# TODO delete data before 1990
 # TODO join with county id info
 # TODO pivot wide
+
+noaa_annual_data_clean <- noaa_annual_data %>%
+  filter(water_year >= 1990)
   
 # ---- 5. export ----
-  
-# export to csv file
+
+# export raw noaa annual data
+write_csv(noaa_annual_data, paste0(tabular_data_output_path, "noaa_annual_data_raw.csv"))
+
+# export cleaned up noaa annual data
+write_csv(noaa_annual_data_clean, paste0(tabular_data_output_path, "noaa_annual_data.csv"))
 
 
 
