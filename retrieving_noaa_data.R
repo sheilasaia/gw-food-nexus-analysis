@@ -23,6 +23,9 @@ tabular_data_output_path <- "/Users/sheila/Dropbox/GW-Food Nexus/tabular_data/no
 # ncdc_key = "<your ncdc api key here>"
 options(noaakey = ncdc_key)
 
+# element descriptions for noaa ghcn data here:
+# https://www1.ncdc.noaa.gov/pub/data/ghcn/daily/readme.txt
+
 
 # ---- 2. load state and county metadata ----
 
@@ -50,7 +53,7 @@ county_ids <- county_ids_raw %>%
 
 # ---- 3. get ghcnd data ----
 
-# get all the station metadta (just do this once!)
+# get all the station metadta (just do this once! b/c it takes a while...)
 all_stations_raw <- rnoaa::ghcnd_stations()
 
 # reformatted all stations 
@@ -63,7 +66,8 @@ all_stations <- all_stations_raw %>%
 
 # make an empty list for all the data
 noaa_annual_data <- data.frame(fips = character(),
-                               noaa_station_id = character(),
+                               noaa_station_list = character(),
+                               noaa_station_count = numeric(),
                                water_year = numeric(),
                                noaa_var = character(),
                                value = character())
@@ -155,18 +159,21 @@ for (i in 1:dim(county_ids)[1]) {
     
     # convert to annual
     temp_tavg_annual_data <- temp_tavg_daily_data_wy %>%
-      group_by(station_id, water_year) %>%
-      summarise(tavg_degc_annual = mean(tavg_degc, na.rm = TRUE)) %>%
+      group_by(water_year) %>%
+      summarise(tavg_degc_annual = mean(tavg_degc, na.rm = TRUE),
+                noaa_station_list = list(unique(station_id)),
+                noaa_station_count = length(unique(station_id))) %>%
       pivot_longer(cols = tavg_degc_annual, names_to = "noaa_var", values_to = "value") %>%
       mutate(fips = temp_county_id_short) %>%
-      select(fips, noaa_station_id = station_id, water_year:value)
+      select(fips, noaa_station_list, noaa_station_count, water_year:value)
     
   } 
   
   # make an empty data frame
   else {
     temp_tavg_annual_data <- data.frame(fips = temp_county_id_short,
-                                        noaa_station_id = NA,
+                                        noaa_station_list = NA,
+                                        noaa_station_count = 0,
                                         water_year = NA,
                                         noaa_var = "tavg_degc_annual",
                                         value = NA)
@@ -207,19 +214,21 @@ for (i in 1:dim(county_ids)[1]) {
     
     # convert to annual
     temp_prcp_annual_data <- temp_prcp_daily_data_wy %>%
-      group_by(station_id, water_year) %>%
-      summarise(prcp_mm_annual = sum(prcp_mm, na.rm = TRUE)) %>%
+      group_by(water_year) %>%
+      summarise(noaa_station_list = list(unique(station_id)),
+                noaa_station_count = length(unique(station_id)),
+                prcp_mm_annual = sum(prcp_mm, na.rm = TRUE)/noaa_station_count) %>%
       pivot_longer(cols = prcp_mm_annual, names_to = "noaa_var", values_to = "value") %>%
       mutate(fips = temp_county_id_short) %>%
-      select(fips, noaa_station_id = station_id, water_year:value)
-    # TODO this sum should be for all stations so only have one output per county - don't group by station_id
-    
+      select(fips, noaa_station_list, noaa_station_count, water_year:value)
+
   }
   
   # make an empty data frame
   else {
     temp_prcp_annual_data <- data.frame(fips = temp_county_id_short,
-                                        noaa_station_id = NA,
+                                        noaa_station_list = NA,
+                                        noaa_station_count = 0,
                                         water_year = NA,
                                         noaa_var = "prcp_mm_annual",
                                         value = NA)
@@ -231,16 +240,24 @@ for (i in 1:dim(county_ids)[1]) {
   # append to full noaa data frame
   noaa_annual_data <- bind_rows(temp_noaa_annual_data, noaa_annual_data)
   
+  # print update
+  perc_complete <- round(i/dim(county_ids)[1], 3) * 100
+  print(paste0("Finished county id # ", temp_county_id_short, ". Run is ", perc_complete, "% complete."))
+  
 }
     
+
+# ---- 4. final wrangling ----
+
+# TODO delete data before 1990
+# TODO join with county id info
+# TODO pivot wide
   
-# ---- 4. export ----
+# ---- 5. export ----
   
-  # join with county id info
-  
-  
-  # export to csv file
-  
-  # TODO 
-  # loop through all gages
-  # data after 1990
+# export to csv file
+
+
+
+
+
