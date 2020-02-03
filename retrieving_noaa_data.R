@@ -8,6 +8,7 @@ library(here)
 library(rnoaa) # https://github.com/ropensci/rnoaa
 library(maps)
 library(lubridate)
+library(dataRetrieval)
 
 # define paths
 # when we put the final data on github we'll use relative paths based on the project
@@ -21,6 +22,9 @@ tabular_data_output_path <- "/Users/sheila/Dropbox/GW-Food Nexus/tabular_data/no
 # load ncdc key
 # ncdc_key = "<your ncdc api key here>"
 options(noaakey = ncdc_key)
+
+# element descriptions for noaa ghcn data here:
+# https://www1.ncdc.noaa.gov/pub/data/ghcn/daily/readme.txt
 
 
 # ---- 2. load state and county metadata ----
@@ -49,7 +53,7 @@ county_ids <- county_ids_raw %>%
 
 # ---- 3. get ghcnd data ----
 
-# get all the station metadta (just do this once!)
+# get all the station metadta (just do this once! b/c it takes a while...)
 all_stations_raw <- rnoaa::ghcnd_stations()
 
 # reformatted all stations 
@@ -62,11 +66,13 @@ all_stations <- all_stations_raw %>%
 
 # make an empty list for all the data
 noaa_annual_data <- data.frame(fips = character(),
-                               year = numeric(),
-                               tavg_annual_degc = numeric(),
-                               precip_annual_mm = numeric())
+                               noaa_station_list = character(),
+                               noaa_station_count = numeric(),
+                               water_year = numeric(),
+                               noaa_var = character(),
+                               value = character())
 
-# (loop should start here)
+# loop through ag dominated counties
 for (i in 1:dim(county_ids)[1]) {
   
   # select count
@@ -122,10 +128,8 @@ for (i in 1:dim(county_ids)[1]) {
     
     # download tidy daily data (temp data is in tenth of deg C)
     temp_tavg_daily_data <- rnoaa::meteo_pull_monitors(monitors = temp_tavg_stations$station_id) %>%
-      mutate(tavg_degc = tavg * 0.1,
-             tmax_degc = tmax * 0.1,
-             tmin_degc = tmin * 0.1) %>%
-      select(station_id = id, date, tavg_degc:tmin_degc)
+      mutate(tavg_degc = tavg * 0.1) %>%
+      select(station_id = id, date, tavg_degc)
     
     # create lookup table for water year bounds
     temp_tavg_stations_wy_lookup <- temp_tavg_stations %>%
@@ -153,272 +157,109 @@ for (i in 1:dim(county_ids)[1]) {
     
     # convert to annual
     temp_tavg_annual_data <- temp_tavg_daily_data_wy %>%
-      group_by(station_id, water_year) %>%
-      summarise(t)
+      group_by(water_year) %>%
+      summarise(tavg_degc_annual = mean(tavg_degc, na.rm = TRUE),
+                noaa_station_list = list(unique(station_id)),
+                noaa_station_count = length(unique(station_id))) %>%
+      pivot_longer(cols = tavg_degc_annual, names_to = "noaa_var", values_to = "value") %>%
+      mutate(fips = temp_county_id_short) %>%
+      select(fips, noaa_station_list, noaa_station_count, water_year:value)
     
-    
-      
-    
-    for (j in 1:num_tavg_stations) {
-      
-      # select temperature data station to download
-      temp_sel_tavg_station <- temp_tavg_stations$station_id[j]
-      
-      # get temperature data
-      temp_tavg_data_raw <- ghcnd(temp_sel_tavg_station, var = "TAVG") %>% # will grab all the data from ghcnd
-        filter(element == "TAVG") %>%
-        select(-element)
-      
-      # reformat temperature (very untidy IMO) data
-      temp_tavg_value_data <- temp_tavg_data_raw %>%
-        group_by(id, year, month) %>%
-        pivot_longer(cols = starts_with("VALUE"), names_to = "raw_col_name", values_to = "tavg_tenth_degc") %>%
-        select(id, year, month, raw_col_name, tavg_tenth_degc) %>%
-        ungroup() %>%
-        mutate(tavg_degc = tavg_tenth_degc * 0.1,
-               year_text = str_trim(as.character(year), side = "both"),
-               month_text = str_trim(as.character(month), side = "both"),
-               day_text = str_trim(str_sub(raw_col_name, start = 6), side = "both"),
-               date = lubridate::ymd(paste0(year_text, "-", month_text, "-", day_text))) %>% 
-        filter(!is.na(date)) %>% # warning comes from dates that don't actually exist (i.e., 2/31/2007) so remove with filter
-        select(id, date, year_text, tavg_degc)
-      
-      # check quality codes and remove data that are not good quality
-      # quality code descriptions: https://www1.ncdc.noaa.gov/pub/data/ghcn/daily/readme.txt
-      temp_tavg_good_quality_dates <- temp_tavg_data_raw %>%
-        group_by(id, year, month) %>%
-        pivot_longer(cols = starts_with("QFLAG"), names_to = "raw_col_name", values_to = "quality_flag") %>%
-        select(id, year, month, raw_col_name, quality_flag) %>%
-        ungroup() %>%
-        mutate(flag = str_trim(quality_flag, side = "both"),
-               year_text = str_trim(as.character(year), side = "both"),
-               month_text = str_trim(as.character(month), side = "both"),
-               day_text = str_trim(str_sub(raw_col_name, start = 6), side = "both"),
-               date = lubridate::ymd(paste0(year_text, "-", month_text, "-", day_text))) %>% 
-        filter(!is.na(date)) %>%
-        select(date, flag) %>%
-        filter(str_length(flag) == 0) %>% # filter out dates where there's a flag (flags indicate issue with data reporting)
-        select(date) %>%
-        filter(date < today()) # don't want to count rest of days in month that haven't happened yet
-      
-      # keep temperature data that are good quality
-      temp_tavg_good_quality_data <- temp_tavg_value_data %>%
-        right_join(temp_tavg_good_quality_dates, by = "date")
-      
-      # define bounds to check that we have a maximum percentage of data per years
-      tavg_perc_annual_data_required <- 90 # X% or more data required to keep data for that year
-      temp_tavg_year_check <- temp_tavg_good_quality_data %>%
-        count(year_text) %>%
-        mutate(percent_complete = (n / 365) * 100) %>%
-        filter(percent_complete >= tavg_perc_annual_data_required) %>% # filter out years that are less than 90% complete
-        select(year_text)
-      
-      # if number of years meets the data requirement percentage then append these
-      if (dim(temp_tavg_year_check)[1] > 0) {
-        
-        # delete incomplete years and reformat
-        temp_tavg_data_to_append <- temp_tavg_good_quality_data %>%
-          filter(year_text %in% temp_tavg_year_check$year_text) %>%
-          mutate(fips = temp_county_id_short,
-                 var_desc = "tavg_degc",
-                 date_text = as.character(date)) %>%
-          select(fips, id, var_desc, date_text, year_text, value = tavg_degc)
-        
-        # if number of years doesn't meet requirement percentage then make empty data frame to append
-      } else {
-        
-        # empty dataframe to append
-        temp_tavg_data_to_append <- data.frame(fips = temp_county_id_short,
-                                               id = NA,
-                                               var_desc = "tavg_degc",
-                                               date_text = NA,
-                                               year_text = NA,
-                                               value = NA)
-        
-      }
-    }
-      
-    if(dim(temp_tavg_data_to_append)[1]) {
-    
-    # calculate annual average temperature
-    temp_tavg_annual_data <- temp_tavg_data %>%
-      group_by(fips, year_text, var_desc) %>%
-      na.omit() %>%
-      summarize(value_annual = mean(value, na.rm = TRUE))
-    
-  } else {
-    
-    # make empty data frame for annual output
+  } 
+  
+  # make an empty data frame
+  else {
     temp_tavg_annual_data <- data.frame(fips = temp_county_id_short,
-                                        year_text = NA,
-                                        var_desc = "tavg_degc",
-                                        value_annual = NA)
-    
+                                        noaa_station_list = NA,
+                                        noaa_station_count = 0,
+                                        water_year = NA,
+                                        noaa_var = "tavg_degc_annual",
+                                        value = NA)
   }
   
   # precipitation
-  # if multiple tavg stations then loop through
+  # only want to get data 
   if (num_prcp_stations > 0) {
     
-    for (k in 1:num_prcp_stations) {
-      
-      # select temperature data station to download
-      temp_sel_prcp_station <- temp_prcp_stations$station_id[k]
-      
-      # get temperature data
-      temp_prcp_data_raw <- ghcnd(temp_sel_prcp_station, var = "PRCP") %>% # will grab all the data from ghcnd
-        filter(element == "PRCP") %>%
-        select(-element)
-      
-      # reformat temperature (very untidy IMO) data
-      temp_prcp_value_data <- temp_prcp_data_raw %>%
-        group_by(id, year, month) %>%
-        pivot_longer(cols = starts_with("VALUE"), names_to = "raw_col_name", values_to = "precip_tenth_mm") %>%
-        select(id, year, month, raw_col_name, precip_tenth_mm) %>%
-        ungroup() %>%
-        mutate(precip_mm = precip_tenth_mm * 0.1,
-               year_text = str_trim(as.character(year), side = "both"),
-               month_text = str_trim(as.character(month), side = "both"),
-               day_text = str_trim(str_sub(raw_col_name, start = 6), side = "both"),
-               date = lubridate::ymd(paste0(year_text, "-", month_text, "-", day_text))) %>% 
-        filter(!is.na(date)) %>% # warning comes from dates that don't actually exist (i.e., 2/31/2007) so remove with filter
-        select(id, date, year_text, precip_mm)
-      
-      # check quality codes and remove data that are not good quality
-      # quality code descriptions: https://www1.ncdc.noaa.gov/pub/data/ghcn/daily/readme.txt
-      temp_prcp_good_quality_dates <- temp_prcp_data_raw %>%
-        group_by(id, year, month) %>%
-        pivot_longer(cols = starts_with("QFLAG"), names_to = "raw_col_name", values_to = "quality_flag") %>%
-        select(id, year, month, raw_col_name, quality_flag) %>%
-        ungroup() %>%
-        mutate(flag = str_trim(quality_flag, side = "both"),
-               year_text = str_trim(as.character(year), side = "both"),
-               month_text = str_trim(as.character(month), side = "both"),
-               day_text = str_trim(str_sub(raw_col_name, start = 6), side = "both"),
-               date = lubridate::ymd(paste0(year_text, "-", month_text, "-", day_text))) %>% 
-        filter(!is.na(date)) %>%
-        select(date, flag) %>%
-        filter(str_length(flag) == 0) %>% # filter out dates where there's a flag (flags indicate issue with data reporting)
-        select(date) %>%
-        filter(date < today()) # don't want to count rest of days in month that haven't happened yet
-      
-      # keep temperature data that are good quality
-      temp_prcp_good_quality_data <- temp_prcp_value_data %>%
-        right_join(temp_prcp_good_quality_dates, by = "date")
-      
-      # define bounds to check that we have a maximum percentage of data per years
-      prcp_perc_annual_data_required <- 90 # X% or more data required to keep data for that year
-      temp_prcp_year_check <- temp_prcp_good_quality_data %>%
-        count(year_text) %>%
-        mutate(percent_complete = (n / 365) * 100) %>%
-        filter(percent_complete >= prcp_perc_annual_data_required) %>% # filter out years that are less than 90% complete
-        select(year_text)
-      
-      # if number of years meets the data requirement percentage then append these
-      if (dim(temp_prcp_year_check)[1] > 0) {
-        
-        # delete incomplete years and reformat
-        temp_prcp_data_to_append <- temp_prcp_good_quality_data %>%
-          filter(year_text %in% temp_prcp_year_check$year_text) %>%
-          mutate(fips = temp_county_id_short,
-                 var_desc = "precip_mm",
-                 date_text = as.character(date)) %>%
-          select(fips, id, var_desc, date_text, year_text, value = precip_mm)
-        
-        # append to precipitation data
-        temp_prcp_data <- bind_rows(temp_prcp_data, temp_prcp_data_to_append)
-        # this will throw a warning but it should be ok!
-        
-      # if number doesn't meet percentage then make empty dataframe
-      } else {
-        
-        # append empty entry
-        temp_prcp_data_to_append <- data.frame(fips = temp_county_id_short,
-                                               id = NA,
-                                               var_desc = "tavg_degc",
-                                               date_text = NA,
-                                               year_text = NA,
-                                               value = NA)
-        
-        # append to precipitation data
-        temp_prcp_data <- bind_rows(temp_prcp_data, temp_prcp_data_to_append)
-        # this will throw a warning but it should be ok!
-        
-      }
-    }
+    # download tidy daily data (precip data is in tenth of mm)
+    temp_prcp_daily_data <- rnoaa::meteo_pull_monitors(monitors = temp_prcp_stations$station_id) %>%
+      mutate(prcp_mm = prcp * 0.1) %>%
+      select(station_id = id, date, prcp_mm)
     
-    # calculate annual precipitation when 
+    # create lookup table for water year bounds
+    temp_prcp_stations_wy_lookup <- temp_prcp_stations %>%
+      select(station_id, first_wy, last_wy)
     
-  } else {
+    # account for water year (from 10/1 to 9/31)
+    temp_prcp_daily_data_wy <- temp_prcp_daily_data %>%
+      mutate(water_year = dataRetrieval::calcWaterYear(date)) %>%
+      left_join(temp_prcp_stations_wy_lookup, by = "station_id") %>%
+      filter(water_year >= first_wy & water_year <= last_wy) %>%
+      select(-first_wy, -last_wy)
     
+    # define we have a maximum percentage of data per years
+    prcp_perc_annual_data_required <- 90 # X% or more data required to keep data for that year
+    temp_prcp_year_check <- temp_prcp_daily_data_wy %>%
+      group_by(station_id, water_year) %>%
+      count() %>%
+      mutate(percent_complete = (n / 365) * 100) %>%
+      filter(percent_complete >= prcp_perc_annual_data_required) %>% # filter out years that are less than 90% complete
+      select(station_id, water_year) 
+    
+    # only keep stations with enough records
+    temp_prcp_daily_data_wy_sel <- temp_prcp_daily_data_wy %>%
+      right_join(temp_prcp_year_check, by = c("station_id", "water_year"))
+    
+    # convert to annual
+    temp_prcp_annual_data <- temp_prcp_daily_data_wy %>%
+      group_by(water_year) %>%
+      summarise(noaa_station_list = list(unique(station_id)),
+                noaa_station_count = length(unique(station_id)),
+                prcp_mm_annual = sum(prcp_mm, na.rm = TRUE)/noaa_station_count) %>%
+      pivot_longer(cols = prcp_mm_annual, names_to = "noaa_var", values_to = "value") %>%
+      mutate(fips = temp_county_id_short) %>%
+      select(fips, noaa_station_list, noaa_station_count, water_year:value)
+
   }
-    
-    
-
-  #     
-  #     # calucate annual total precipitation
-  #     temp_prcp_annual_data <- temp_prcp_data %>%
-  #       group_by(fips, year_text, var_desc) %>%
-  #       na.omit() %>%
-  #       summarize(value_annual = sum(value, na.rm = TRUE))
-  #     
-  #     # make empty data frame for annual output
-  #     temp_prcp_annual_data <- data.frame(fips = temp_county_id_short,
-  #                                         year_text = NA,
-  #                                         var_desc = "precip_mm",
-  #                                         value_annual = NA) 
-  #     
-  #   }
-  # } else {
-  #   
-  #   # make empty data frame for annual output
-  #   temp_prcp_annual_data <- data.frame(fips = temp_county_id_short,
-  #                                       year_text = NA,
-  #                                       var_desc = "precip_mm",
-  #                                       value_annual = NA)  
-  #   }
   
-  # only save if there is temperature and precipitation data
-  # if (num_tavg_stations > 0 & num_prcp_stations > 0) {
-    
-    # merge annual temperature and precipitation
-    temp_merge_data <- bind_rows(temp_tavg_annual_data, temp_prcp_annual_data) %>%
-      ungroup() %>%
-      pivot_wider(id_cols = c("fips", "year_text"), 
-                  names_from = var_desc, 
-                  values_from = value_annual) %>%
-      mutate(year = as.numeric(year_text)) %>%
-      select(fips, year, tavg_annual_degc = tavg_degc, precip_annual_mm = precip_mm)
-    
-    # bind to noaa annual data
-    noaa_annual_data <- bind_rows(noaa_annual_data, temp_merge_data) %>%
-      filter(year >= 1960 & !is.na(year))  %>%
-      arrange(year, fips)
-    
-    print(paste0("Loop is ", round(i/dim(county_ids)[1] * 100, 1), "% complete."))
-    
-  # } else {
-  #   
-  #   # add empty row
-  #   temp_merge_data <- data.frame(fips = temp_county_id_short,
-  #                                 year = NA,
-  #                                 tavg_annual_degc = NA,
-  #                                 precip_annual_mm = NA)
-  #   
-  #   # add empty row to to noaa precipitation data
-  #   noaa_annual_data <- bind_rows(noaa_annual_data, temp_merge_data)
-  #   
-  # }
+  # make an empty data frame
+  else {
+    temp_prcp_annual_data <- data.frame(fips = temp_county_id_short,
+                                        noaa_station_list = NA,
+                                        noaa_station_count = 0,
+                                        water_year = NA,
+                                        noaa_var = "prcp_mm_annual",
+                                        value = NA)
+  }
+  
+  # bind data
+  temp_noaa_annual_data <- bind_rows(temp_prcp_annual_data, temp_tavg_annual_data)
+  
+  # append to full noaa data frame
+  noaa_annual_data <- bind_rows(temp_noaa_annual_data, noaa_annual_data)
+  
+  # print update
+  perc_complete <- round(i/dim(county_ids)[1], 3) * 100
+  print(paste0("Finished county id # ", temp_county_id_short, ". Run is ", perc_complete, "% complete."))
+
 }
+    
+# TODO there are several sites without tavg available
+
+# ---- 4. final wrangling ----
+
+# TODO join with county id info
+# TODO pivot wide
+
+noaa_annual_data_clean <- noaa_annual_data %>%
+  filter(water_year >= 1990)
+  
+# ---- 5. export ----
+
+# export raw noaa annual data
+write_csv(noaa_annual_data, paste0(tabular_data_output_path, "noaa_annual_data_raw.csv"))
+
+# export cleaned up noaa annual data
+write_csv(noaa_annual_data_clean, paste0(tabular_data_output_path, "noaa_annual_data.csv"))
 
 
-# ---- 4. export ----
-
-# join with county id info
-
-
-# export to csv file
-
-# TO DOs
-# loop through all gages
-# data after 1990
