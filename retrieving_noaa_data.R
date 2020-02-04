@@ -75,6 +75,10 @@ noaa_annual_data <- data.frame(fips = character(),
 # loop through ag dominated counties
 for (i in 1:dim(county_ids)[1]) {
   
+  # variable naming conventions:
+  # temp refers to a temporary variable that will be redefined for each loop
+  # t refers to temperature
+  
   # select count
   temp_county_id_short <- county_ids$fips[i]
   temp_county_id <- paste0("FIPS:", temp_county_id_short)
@@ -112,7 +116,11 @@ for (i in 1:dim(county_ids)[1]) {
   
   # active temperature stations
   temp_tavg_stations <- temp_county_active_stations %>%
-    filter(element == "TAVG" | element == "TMIN" | element == "TMAX")
+    filter(element == "TAVG")
+  temp_tmin_stations <- temp_county_active_stations %>%
+    filter(element == "TMIN")
+  temp_tmax_stations <- temp_county_active_stations %>%
+    filter(element == "TMAX")
   
   # active precipitation stations
   temp_prcp_stations <- temp_county_active_stations %>%
@@ -120,61 +128,168 @@ for (i in 1:dim(county_ids)[1]) {
   
   # check length of stations
   num_tavg_stations <- dim(temp_tavg_stations)[1]
+  num_tmin_stations <- dim(temp_tmin_stations)[1]
+  num_tmax_stations <- dim(temp_tmax_stations)[1]
   num_prcp_stations <- dim(temp_prcp_stations)[1]
   
   # temperature
-  # only want to get data 
-  if (num_tavg_stations > 0) {
+  # if there are tavg, tmin, and tmax stations
+  if (num_tavg_stations > 0 & num_tmin_stations > 0 & num_tmax_stations > 0) {
+    
+    # combine stations into one list
+    temp_t_stations <- bind_rows(temp_tavg_stations, temp_tmin_stations, temp_tmax_stations)
     
     # download tidy daily data (temp data is in tenth of deg C)
-    temp_tavg_daily_data <- rnoaa::meteo_pull_monitors(monitors = temp_tavg_stations$station_id) %>%
-      mutate(tavg_degc = tavg * 0.1) %>%
-      select(station_id = id, date, tavg_degc)
+    temp_t_daily_data <- rnoaa::meteo_pull_monitors(monitors = temp_t_stations$station_id) %>%
+      mutate(tavg_degc = tavg * 0.1, 
+             tmin_degc = tmin * 0.1,
+             tmax_degc = tmax * 0.1) %>%
+      select(station_id = id, date, tavg_degc, tmin_degc, tmax_degc)
     
     # create lookup table for water year bounds
-    temp_tavg_stations_wy_lookup <- temp_tavg_stations %>%
+    temp_t_stations_wy_lookup <- temp_t_stations %>%
       select(station_id, first_wy, last_wy)
     
     # account for water year (from 10/1 to 9/31)
-    temp_tavg_daily_data_wy <- temp_tavg_daily_data %>%
+    temp_t_daily_data_wy <- temp_t_daily_data %>%
       mutate(water_year = dataRetrieval::calcWaterYear(date)) %>%
-      left_join(temp_tavg_stations_wy_lookup, by = "station_id") %>%
+      left_join(temp_t_stations_wy_lookup, by = "station_id") %>%
       filter(water_year >= first_wy & water_year <= last_wy) %>%
       select(-first_wy, -last_wy)
     
     # define we have a maximum percentage of data per years
-    tavg_perc_annual_data_required <- 90 # X% or more data required to keep data for that year
-    temp_tavg_year_check <- temp_tavg_daily_data_wy %>%
+    t_perc_annual_data_required <- 90 # X% or more data required to keep data for that year
+    temp_t_year_check <- temp_t_daily_data_wy %>%
       group_by(station_id, water_year) %>%
       count() %>%
       mutate(percent_complete = (n / 365) * 100) %>%
-      filter(percent_complete >= tavg_perc_annual_data_required) %>% # filter out years that are less than 90% complete
+      filter(percent_complete >= t_perc_annual_data_required) %>% # filter out years that are less than 90% complete
       select(station_id, water_year) 
     
     # only keep stations with enough records
-    temp_tavg_daily_data_wy_sel <- temp_tavg_daily_data_wy %>%
-      right_join(temp_tavg_year_check, by = c("station_id", "water_year"))
+    temp_t_daily_data_wy_sel <- temp_t_daily_data_wy %>%
+      right_join(temp_t_year_check, by = c("station_id", "water_year"))
     
     # convert to annual
-    temp_tavg_annual_data <- temp_tavg_daily_data_wy %>%
+    temp_t_annual_data <- temp_t_daily_data_wy %>%
+      group_by(water_year) %>%
+      summarise(tavg_degc_annual = mean(tavg_degc, na.rm = TRUE),
+                tmin_degc_annual = mean(tmin_degc, na.rm = TRUE),
+                tmax_degc_annual = mean(tmax_degc, na.rm = TRUE),
+                noaa_station_list = list(unique(station_id)),
+                noaa_station_count = length(unique(station_id))) %>%
+      pivot_longer(cols = c(tavg_degc_annual, tmin_degc_annual, tmax_degc_annual), names_to = "noaa_var", values_to = "value") %>%
+      mutate(fips = temp_county_id_short) %>%
+      select(fips, noaa_station_list, noaa_station_count, water_year:value) %>%
+      filter(is.nan(value) == FALSE) # keep only non-NaN values
+    
+  }
+  
+  # if only tmin or tmax stations
+  else if (num_tavg_stations == 0 & (num_tmin_stations > 0 & num_tmax_stations > 0)) {
+    
+    # combine stations into one list
+    temp_t_stations <- bind_rows(temp_tmin_stations, temp_tmax_stations)
+    
+    # download tidy daily data (temp data is in tenth of deg C)
+    temp_t_daily_data <- rnoaa::meteo_pull_monitors(monitors = temp_t_stations$station_id) %>%
+      mutate(tmin_degc = tmin * 0.1,
+             tmax_degc = tmax * 0.1) %>%
+      select(station_id = id, date, tmin_degc, tmax_degc)
+    
+    # create lookup table for water year bounds
+    temp_t_stations_wy_lookup <- temp_t_stations %>%
+      select(station_id, first_wy, last_wy)
+    
+    # account for water year (from 10/1 to 9/31)
+    temp_t_daily_data_wy <- temp_t_daily_data %>%
+      mutate(water_year = dataRetrieval::calcWaterYear(date)) %>%
+      left_join(temp_t_stations_wy_lookup, by = "station_id") %>%
+      filter(water_year >= first_wy & water_year <= last_wy) %>%
+      select(-first_wy, -last_wy)
+    
+    # define we have a maximum percentage of data per years
+    t_perc_annual_data_required <- 90 # X% or more data required to keep data for that year
+    temp_t_year_check <- temp_t_daily_data_wy %>%
+      group_by(station_id, water_year) %>%
+      count() %>%
+      mutate(percent_complete = (n / 365) * 100) %>%
+      filter(percent_complete >= t_perc_annual_data_required) %>% # filter out years that are less than 90% complete
+      select(station_id, water_year) 
+    
+    # only keep stations with enough records
+    temp_t_daily_data_wy_sel <- temp_t_daily_data_wy %>%
+      right_join(temp_t_year_check, by = c("station_id", "water_year"))
+    
+    # convert to annual
+    temp_t_annual_data <- temp_t_daily_data_wy %>%
+      group_by(water_year) %>%
+      summarise(tmin_degc_annual = mean(tmin_degc, na.rm = TRUE),
+                tmax_degc_annual = mean(tmax_degc, na.rm = TRUE),
+                noaa_station_list = list(unique(station_id)),
+                noaa_station_count = length(unique(station_id))) %>%
+      pivot_longer(cols = c(tmin_degc_annual, tmax_degc_annual), names_to = "noaa_var", values_to = "value") %>%
+      mutate(fips = temp_county_id_short) %>%
+      select(fips, noaa_station_list, noaa_station_count, water_year:value) %>%
+      filter(is.nan(value) == FALSE) # keep only non-NaN values
+    
+  }
+  
+  # if only tavg stations
+  else if (num_tavg_stations > 0 & (num_tmin_stations == 0 | num_tmax_stations == 0)) {
+    
+    # only use tavg stations as list
+    temp_t_stations <- temp_tavg_stations
+    
+    # download tidy daily data (temp data is in tenth of deg C)
+    temp_t_daily_data <- rnoaa::meteo_pull_monitors(monitors = temp_t_stations$station_id) %>%
+      mutate(tavg_degc = tavg * 0.1) %>%
+      select(station_id = id, date, tavg_degc)
+    
+    # create lookup table for water year bounds
+    temp_t_stations_wy_lookup <- temp_t_stations %>%
+      select(station_id, first_wy, last_wy)
+    
+    # account for water year (from 10/1 to 9/31)
+    temp_t_daily_data_wy <- temp_t_daily_data %>%
+      mutate(water_year = dataRetrieval::calcWaterYear(date)) %>%
+      left_join(temp_t_stations_wy_lookup, by = "station_id") %>%
+      filter(water_year >= first_wy & water_year <= last_wy) %>%
+      select(-first_wy, -last_wy)
+    
+    # define we have a maximum percentage of data per years
+    t_perc_annual_data_required <- 90 # X% or more data required to keep data for that year
+    temp_t_year_check <- temp_t_daily_data_wy %>%
+      group_by(station_id, water_year) %>%
+      count() %>%
+      mutate(percent_complete = (n / 365) * 100) %>%
+      filter(percent_complete >= t_perc_annual_data_required) %>% # filter out years that are less than 90% complete
+      select(station_id, water_year) 
+    
+    # only keep stations with enough records
+    temp_t_daily_data_wy_sel <- temp_t_daily_data_wy %>%
+      right_join(temp_t_year_check, by = c("station_id", "water_year"))
+    
+    # convert to annual
+    temp_t_annual_data <- temp_t_daily_data_wy %>%
       group_by(water_year) %>%
       summarise(tavg_degc_annual = mean(tavg_degc, na.rm = TRUE),
                 noaa_station_list = list(unique(station_id)),
                 noaa_station_count = length(unique(station_id))) %>%
       pivot_longer(cols = tavg_degc_annual, names_to = "noaa_var", values_to = "value") %>%
       mutate(fips = temp_county_id_short) %>%
-      select(fips, noaa_station_list, noaa_station_count, water_year:value)
+      select(fips, noaa_station_list, noaa_station_count, water_year:value) %>%
+      filter(is.nan(value) == FALSE) # keep only non-NaN values
     
   }
   
-  
   # make an empty data frame
   else {
-    temp_tavg_annual_data <- data.frame(fips = temp_county_id_short,
+    temp_t_annual_data <- data.frame(fips = temp_county_id_short,
                                         noaa_station_list = NA,
                                         noaa_station_count = 0,
                                         water_year = NA,
-                                        noaa_var = "tavg_degc_annual",
+                                        noaa_var = NA,
                                         value = NA)
   }
   
@@ -234,7 +349,7 @@ for (i in 1:dim(county_ids)[1]) {
   }
   
   # bind data
-  temp_noaa_annual_data <- bind_rows(temp_prcp_annual_data, temp_tavg_annual_data)
+  temp_noaa_annual_data <- bind_rows(temp_prcp_annual_data, temp_t_annual_data)
   
   # append to full noaa data frame
   noaa_annual_data <- bind_rows(temp_noaa_annual_data, noaa_annual_data)
