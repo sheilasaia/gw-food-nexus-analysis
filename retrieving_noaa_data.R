@@ -360,8 +360,7 @@ for (i in 1:dim(county_ids)[1]) {
   print(paste0("Finished county id # ", temp_county_id_short, ". Run is ", perc_complete, "% complete."))
 
 }
-    
-# TODO there are several sites without tavg available
+
 
 # ---- 4. final wrangling ----
 
@@ -377,3 +376,6 @@ noaa_annual_data_clean <- noaa_annual_data %>%
 
 # export noaa annual data
 write_csv(noaa_annual_data_clean, paste0(tabular_data_output_path, "noaa_annual_data.csv"))
+
+
+
