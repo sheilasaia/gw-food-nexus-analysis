@@ -348,8 +348,9 @@ for (i in 1:dim(county_ids)[1]) {
                                         value = NA)
   }
   
-  # bind data
-  temp_noaa_annual_data <- bind_rows(temp_prcp_annual_data, temp_t_annual_data)
+  # bind data and keep only years 1990 and above
+  temp_noaa_annual_data <- bind_rows(temp_prcp_annual_data, temp_t_annual_data) %>%
+    filter(water_year >= 1990)
   
   # append to full noaa data frame
   noaa_annual_data <- bind_rows(temp_noaa_annual_data, noaa_annual_data)
@@ -364,18 +365,15 @@ for (i in 1:dim(county_ids)[1]) {
 
 # ---- 4. final wrangling ----
 
-# TODO join with county id info
-# TODO pivot wide
-
 noaa_annual_data_clean <- noaa_annual_data %>%
-  filter(water_year >= 1990)
-  
+  rowwise() %>%
+  mutate(noaa_station_list_str = str_replace_all(str_c(unlist(noaa_station_list), collapse = " "), pattern = " ", replacement = ", ")) %>%
+  pivot_wider(names_from = noaa_var, values_from = value) %>%
+  select(fips, water_year, prcp_mm_annual:tavg_degc_annual, noaa_station_list_str, noaa_station_count) %>%
+  arrange(fips, water_year)
+
+
 # ---- 5. export ----
 
-# export raw noaa annual data
-write_csv(noaa_annual_data, paste0(tabular_data_output_path, "noaa_annual_data_raw.csv"))
-
-# export cleaned up noaa annual data
+# export noaa annual data
 write_csv(noaa_annual_data_clean, paste0(tabular_data_output_path, "noaa_annual_data.csv"))
-
-
