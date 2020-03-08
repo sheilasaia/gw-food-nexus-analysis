@@ -8,7 +8,6 @@ library(here)
 library(rnoaa) # https://github.com/ropensci/rnoaa
 library(maps)
 library(lubridate)
-# library(dataRetrieval)
 
 # define paths
 # when we put the final data on github we'll use relative paths based on the project
@@ -82,15 +81,18 @@ for (i in 1:dim(county_ids)[1]) {
   # select count
   temp_county_id_short <- county_ids$fips[i]
   temp_county_id <- paste0("FIPS:", temp_county_id_short)
-  # issue at i = 255
   
   # look up stations in county
   temp_county_stations <- ncdc_stations(datasetid = 'GHCND', locationid = temp_county_id)
   
-  # reformat list
+  # define key cutoff variables here
   min_possible_year <- 1990 # will use this below when calculating annual values
   current_full_year <- 2019
   record_length_min_years <- 5 # decrease this to get more stations (shorter required time record)
+  t_perc_annual_data_required <- 90 # X% or more temperature data required to keep data for that year
+  prcp_perc_annual_data_required <- 90 # X% or more precip data required to keep data for that year
+
+  # reformat list 
   temp_county_stations_list <- temp_county_stations$data %>%
     select(id, name, latitude, longitude, elevation, elevation_unit = elevationUnit)
   
@@ -146,9 +148,7 @@ for (i in 1:dim(county_ids)[1]) {
       select(station_id = id, date, year, tavg_degc, tmin_degc, tmax_degc)
     
     # define we have a maximum percentage of data per years
-    t_perc_annual_data_required <- 90 # X% or more data required to keep data for that year
     temp_t_year_check <- temp_t_daily_data %>%
-      mutate(year = year(date)) %>%
       group_by(station_id, year) %>%
       count() %>%
       mutate(percent_complete = (n / 365) * 100) %>%
@@ -192,9 +192,7 @@ for (i in 1:dim(county_ids)[1]) {
       select(station_id = id, date, year, tmin_degc, tmax_degc)
     
     # define we have a maximum percentage of data per years
-    t_perc_annual_data_required <- 90 # X% or more data required to keep data for that year
     temp_t_year_check <- temp_t_daily_data %>%
-      mutate(year = year(date)) %>%
       group_by(station_id, year) %>%
       count() %>%
       mutate(percent_complete = (n / 365) * 100) %>%
@@ -230,13 +228,12 @@ for (i in 1:dim(county_ids)[1]) {
     temp_t_daily_data <- rnoaa::meteo_pull_monitors(monitors = temp_t_stations$station_id) %>%
       select(id, date, tavg) %>%
       na.omit() %>%
-      mutate(tavg_degc = tavg * 0.1) %>%
-      select(station_id = id, date, tavg_degc)
+      mutate(tavg_degc = tavg * 0.1,
+             year = year(date)) %>%
+      select(station_id = id, date, year, tavg_degc)
     
     # define we have a maximum percentage of data per years
-    t_perc_annual_data_required <- 90 # X% or more data required to keep data for that year
     temp_t_year_check <- temp_t_daily_data %>%
-      mutate(year = year(date)) %>%
       group_by(station_id, year) %>%
       count() %>%
       mutate(percent_complete = (n / 365) * 100) %>%
@@ -271,49 +268,41 @@ for (i in 1:dim(county_ids)[1]) {
                                         value = NA)
   }
   
-  # TODO stopped here!
   # precipitation
   # only want to get data 
   if (num_prcp_stations > 0) {
     
     # download tidy daily data (precip data is in tenth of mm)
     temp_prcp_daily_data <- rnoaa::meteo_pull_monitors(monitors = temp_prcp_stations$station_id) %>%
-      mutate(prcp_mm = prcp * 0.1) %>%
-      select(station_id = id, date, prcp_mm)
-    
-    # create lookup table for water year bounds
-    temp_prcp_stations_wy_lookup <- temp_prcp_stations %>%
-      select(station_id, first_wy, last_wy)
-    
-    # account for water year (from 10/1 to 9/31)
-    temp_prcp_daily_data_wy <- temp_prcp_daily_data %>%
-      mutate(water_year = dataRetrieval::calcWaterYear(date)) %>%
-      left_join(temp_prcp_stations_wy_lookup, by = "station_id") %>%
-      filter(water_year >= first_wy & water_year <= last_wy) %>%
-      select(-first_wy, -last_wy)
+      select(id, date, prcp) %>%
+      na.omit() %>%
+      mutate(prcp_mm = prcp * 0.1,
+             year = year(date)) %>%
+      select(station_id = id, date, year, prcp_mm)
     
     # define we have a maximum percentage of data per years
-    prcp_perc_annual_data_required <- 90 # X% or more data required to keep data for that year
-    temp_prcp_year_check <- temp_prcp_daily_data_wy %>%
-      group_by(station_id, water_year) %>%
+    temp_prcp_year_check <- temp_prcp_daily_data %>%
+      group_by(station_id, year) %>%
       count() %>%
       mutate(percent_complete = (n / 365) * 100) %>%
       filter(percent_complete >= prcp_perc_annual_data_required) %>% # filter out years that are less than 90% complete
-      select(station_id, water_year) 
+      select(station_id, year) 
     
     # only keep stations with enough records
-    temp_prcp_daily_data_wy_sel <- temp_prcp_daily_data_wy %>%
-      right_join(temp_prcp_year_check, by = c("station_id", "water_year"))
+    temp_prcp_daily_data_sel <- temp_prcp_daily_data %>%
+      right_join(temp_prcp_year_check, by = c("station_id", "year"))
     
     # convert to annual
-    temp_prcp_annual_data <- temp_prcp_daily_data_wy %>%
-      group_by(water_year) %>%
-      summarise(noaa_station_list = list(unique(station_id)),
-                noaa_station_count = length(unique(station_id)),
-                prcp_mm_annual = sum(prcp_mm, na.rm = TRUE)/noaa_station_count) %>%
+    temp_prcp_annual_data <- temp_prcp_daily_data_sel %>%
+      filter(year >= min_possible_year) %>%
+      group_by(year) %>%
+      summarise(prcp_mm_annual = mean(prcp_mm, na.rm = TRUE),
+                noaa_station_list = list(unique(station_id)),
+                noaa_station_count = length(unique(station_id))) %>%
       pivot_longer(cols = prcp_mm_annual, names_to = "noaa_var", values_to = "value") %>%
       mutate(fips = temp_county_id_short) %>%
-      select(fips, noaa_station_list, noaa_station_count, water_year:value)
+      select(fips, noaa_station_list, noaa_station_count, year, noaa_var, value) %>%
+      filter(is.nan(value) == FALSE) # keep only non-NaN values
 
   }
   
@@ -322,7 +311,7 @@ for (i in 1:dim(county_ids)[1]) {
     temp_prcp_annual_data <- data.frame(fips = temp_county_id_short,
                                         noaa_station_list = NA,
                                         noaa_station_count = 0,
-                                        water_year = NA,
+                                        year = NA,
                                         noaa_var = "prcp_mm_annual",
                                         value = NA)
   }
@@ -346,8 +335,8 @@ noaa_annual_data_clean <- noaa_annual_data %>%
   rowwise() %>%
   mutate(noaa_station_list_str = str_replace_all(str_c(unlist(noaa_station_list), collapse = " "), pattern = " ", replacement = ", ")) %>%
   pivot_wider(names_from = noaa_var, values_from = value) %>%
-  select(fips, water_year, prcp_mm_annual:tavg_degc_annual, noaa_station_list_str, noaa_station_count) %>%
-  arrange(fips, water_year)
+  select(fips, year, prcp_mm_annual:tavg_degc_annual, noaa_station_list_str, noaa_station_count) %>%
+  arrange(fips, year)
 
 
 # ---- 5. export ----
