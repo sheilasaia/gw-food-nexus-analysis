@@ -332,6 +332,7 @@ for (i in 1:dim(county_ids)[1]) {
 # ---- 4. final wrangling ----
 
 noaa_annual_data_clean <- noaa_annual_data %>%
+  filter(noaa_station_count != 0) %>%
   rowwise() %>%
   mutate(noaa_station_list_str = str_replace_all(str_c(unlist(noaa_station_list), collapse = " "), pattern = " ", replacement = ", ")) %>%
   pivot_wider(names_from = noaa_var, values_from = value) %>%
