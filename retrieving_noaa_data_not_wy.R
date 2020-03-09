@@ -64,6 +64,12 @@ all_stations <- all_stations_raw %>%
 # change so id column matches output from ncdc_stations()
 
 # make an empty list for all the data
+noaa_monthly_data <- data.frame(fips = character(),
+                               noaa_station_list = character(),
+                               noaa_station_count = numeric(),
+                               year_month = character(),
+                               noaa_var = character(),
+                               value = character())
 noaa_annual_data <- data.frame(fips = character(),
                                noaa_station_list = character(),
                                noaa_station_count = numeric(),
@@ -159,6 +165,21 @@ for (i in 1:dim(county_ids)[1]) {
     temp_t_daily_data_sel <- temp_t_daily_data %>%
       right_join(temp_t_year_check, by = c("station_id", "year"))
     
+    # convert to monthly
+    temp_t_monthly_data <- temp_t_daily_data_sel %>%
+      filter(year >= min_possible_year) %>%
+      mutate(year_month = paste0(year, "_", str_pad(month(date), width = 2, side = "left", pad = "0"))) %>%
+      group_by(year_month) %>%
+      summarise(tavg_degc_monthly = mean(tavg_degc, na.rm = TRUE),
+                tmin_degc_monthly = mean(tmin_degc, na.rm = TRUE),
+                tmax_degc_monthly = mean(tmax_degc, na.rm = TRUE),
+                noaa_station_list = list(unique(station_id)),
+                noaa_station_count = length(unique(station_id))) %>%
+      pivot_longer(cols = c(tavg_degc_monthly, tmin_degc_monthly, tmax_degc_monthly), names_to = "noaa_var", values_to = "value") %>%
+      mutate(fips = temp_county_id_short) %>%
+      select(fips, noaa_station_list, noaa_station_count, year_month, noaa_var, value) %>%
+      filter(is.nan(value) == FALSE) # keep only non-NaN values
+    
     # convert to annual
     temp_t_annual_data <- temp_t_daily_data_sel %>%
       filter(year >= min_possible_year) %>%
@@ -203,6 +224,20 @@ for (i in 1:dim(county_ids)[1]) {
     temp_t_daily_data_sel <- temp_t_daily_data %>%
       right_join(temp_t_year_check, by = c("station_id", "year"))
     
+    # convert to monthly
+    temp_t_monthly_data <- temp_t_daily_data_sel %>%
+      filter(year >= min_possible_year) %>%
+      mutate(year_month = paste0(year, "_", str_pad(month(date), width = 2, side = "left", pad = "0"))) %>%
+      group_by(year_month) %>%
+      summarise(tmin_degc_monthly = mean(tmin_degc, na.rm = TRUE),
+                tmax_degc_monthly = mean(tmax_degc, na.rm = TRUE),
+                noaa_station_list = list(unique(station_id)),
+                noaa_station_count = length(unique(station_id))) %>%
+      pivot_longer(cols = c(tmin_degc_monthly, tmax_degc_monthly), names_to = "noaa_var", values_to = "value") %>%
+      mutate(fips = temp_county_id_short) %>%
+      select(fips, noaa_station_list, noaa_station_count, year_month, noaa_var, value) %>%
+      filter(is.nan(value) == FALSE) # keep only non-NaN values
+    
     # convert to annual
     temp_t_annual_data <- temp_t_daily_data_sel %>%
       filter(year >= min_possible_year) %>%
@@ -244,6 +279,19 @@ for (i in 1:dim(county_ids)[1]) {
     temp_t_daily_data_sel <- temp_t_daily_data %>%
       right_join(temp_t_year_check, by = c("station_id", "year"))
     
+    # convert to monthly
+    temp_t_monthly_data <- temp_t_daily_data_sel %>%
+      filter(year >= min_possible_year) %>%
+      mutate(year_month = paste0(year, "_", str_pad(month(date), width = 2, side = "left", pad = "0"))) %>%
+      group_by(year_month) %>%
+      summarise(tavg_degc_monthly = mean(tavg_degc, na.rm = TRUE),
+                noaa_station_list = list(unique(station_id)),
+                noaa_station_count = length(unique(station_id))) %>%
+      pivot_longer(cols = tavg_degc_monthly, names_to = "noaa_var", values_to = "value") %>%
+      mutate(fips = temp_county_id_short) %>%
+      select(fips, noaa_station_list, noaa_station_count, year_month, noaa_var, value) %>%
+      filter(is.nan(value) == FALSE) # keep only non-NaN values
+    
     # convert to annual
     temp_t_annual_data <- temp_t_daily_data_sel %>%
       filter(year >= min_possible_year) %>%
@@ -260,12 +308,21 @@ for (i in 1:dim(county_ids)[1]) {
   
   # make an empty data frame
   else {
+    # monthly
+    temp_t_monthly_data <- data.frame(fips = temp_county_id_short,
+                                      noaa_station_list = NA,
+                                      noaa_station_count = 0,
+                                      year_month = NA,
+                                      noaa_var = NA,
+                                      value = NA)
+    
+    # annual
     temp_t_annual_data <- data.frame(fips = temp_county_id_short,
-                                        noaa_station_list = NA,
-                                        noaa_station_count = 0,
-                                        year = NA,
-                                        noaa_var = NA,
-                                        value = NA)
+                                     noaa_station_list = NA,
+                                     noaa_station_count = 0,
+                                     year = NA,
+                                     noaa_var = NA,
+                                     value = NA)
   }
   
   # precipitation
@@ -292,11 +349,24 @@ for (i in 1:dim(county_ids)[1]) {
     temp_prcp_daily_data_sel <- temp_prcp_daily_data %>%
       right_join(temp_prcp_year_check, by = c("station_id", "year"))
     
+    # convert to monthly
+    temp_prcp_monthly_data <- temp_prcp_daily_data_sel %>%
+      filter(year >= min_possible_year) %>%
+      mutate(year_month = paste0(year, "_", str_pad(month(date), width = 2, side = "left", pad = "0"))) %>%
+      group_by(year_month) %>%
+      summarise(prcp_mm_monthly = sum(prcp_mm, na.rm = TRUE),
+                noaa_station_list = list(unique(station_id)),
+                noaa_station_count = length(unique(station_id))) %>%
+      pivot_longer(cols = prcp_mm_monthly, names_to = "noaa_var", values_to = "value") %>%
+      mutate(fips = temp_county_id_short) %>%
+      select(fips, noaa_station_list, noaa_station_count, year_month, noaa_var, value) %>%
+      filter(is.nan(value) == FALSE) # keep only non-NaN values
+    
     # convert to annual
     temp_prcp_annual_data <- temp_prcp_daily_data_sel %>%
       filter(year >= min_possible_year) %>%
       group_by(year) %>%
-      summarise(prcp_mm_annual = mean(prcp_mm, na.rm = TRUE),
+      summarise(prcp_mm_annual = sum(prcp_mm, na.rm = TRUE),
                 noaa_station_list = list(unique(station_id)),
                 noaa_station_count = length(unique(station_id))) %>%
       pivot_longer(cols = prcp_mm_annual, names_to = "noaa_var", values_to = "value") %>%
@@ -308,6 +378,15 @@ for (i in 1:dim(county_ids)[1]) {
   
   # make an empty data frame
   else {
+    # monthly
+    temp_prcp_monthly_data <- data.frame(fips = temp_county_id_short,
+                                         noaa_station_list = NA,
+                                         noaa_station_count = 0,
+                                         year_month = NA,
+                                         noaa_var = "prcp_mm_monthly",
+                                         value = NA)
+    
+    # annual
     temp_prcp_annual_data <- data.frame(fips = temp_county_id_short,
                                         noaa_station_list = NA,
                                         noaa_station_count = 0,
@@ -317,9 +396,11 @@ for (i in 1:dim(county_ids)[1]) {
   }
   
   # bind data
+  temp_noaa_monthly_data <- bind_rows(temp_prcp_monthly_data, temp_t_monthly_data)
   temp_noaa_annual_data <- bind_rows(temp_prcp_annual_data, temp_t_annual_data)
   
   # append to full noaa data frame
+  noaa_monthly_data <- bind_rows(temp_noaa_monthly_data, noaa_monthly_data)
   noaa_annual_data <- bind_rows(temp_noaa_annual_data, noaa_annual_data)
   
   # print update
@@ -331,6 +412,16 @@ for (i in 1:dim(county_ids)[1]) {
 
 # ---- 4. final wrangling ----
 
+# monthly data
+noaa_annual_data_clean <- noaa_annual_data %>%
+  filter(noaa_station_count != 0) %>%
+  rowwise() %>%
+  mutate(noaa_station_list_str = str_replace_all(str_c(unlist(noaa_station_list), collapse = " "), pattern = " ", replacement = ", ")) %>%
+  pivot_wider(names_from = noaa_var, values_from = value) %>%
+  select(fips, year_month, prcp_mm_monthly:tavg_degc_monthly, noaa_station_list_str, noaa_station_count) %>%
+  arrange(fips, year_month)
+
+# annual data
 noaa_annual_data_clean <- noaa_annual_data %>%
   filter(noaa_station_count != 0) %>%
   rowwise() %>%
@@ -343,6 +434,7 @@ noaa_annual_data_clean <- noaa_annual_data %>%
 # ---- 5. export ----
 
 # export noaa annual data
+write_csv(noaa_monthly_data_clean, paste0(tabular_data_output_path, "noaa_monthly_data.csv"))
 write_csv(noaa_annual_data_clean, paste0(tabular_data_output_path, "noaa_annual_data.csv"))
 
 
