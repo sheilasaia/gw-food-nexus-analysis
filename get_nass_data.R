@@ -164,11 +164,10 @@ for  (i in 1:dim(county_crop_data_tidy)[1]) {
   }
 }
 
-
 # ---- get nass area planted data ----
 
 # empty data frame to hold data
-nass_area_planted_data <- NULL
+nass_area_plant_data <- NULL
 
 # short list to start
 # county_crop_data_tidy_tiny <- county_crop_data_tidy %>%
@@ -333,11 +332,16 @@ nass_ag_land_data <- NULL
 #   arrange(fips) %>%
 #   slice_head(n = 6)
 
+# crop doesn't matter here so only pull one per county (vs three per county for top three crops)
+county_crop_data_tidy_distinct <- county_crop_data_tidy %>%
+  select(fips:county_fips) %>%
+  distinct()
+
 # for loop
-for  (i in 1:dim(county_crop_data_tidy)[1]) {
+for  (i in 1:dim(county_crop_data_tidy_distinct)[1]) {
   # get variables
-  temp_state_ansi <- county_crop_data_tidy$state_fips[i]
-  temp_county_ansi <- county_crop_data_tidy$county_fips[i]
+  temp_state_ansi <- county_crop_data_tidy_distinct$state_fips[i]
+  temp_county_ansi <- county_crop_data_tidy_distinct$county_fips[i]
   
   # define parameter list for record count query
   temp_ag_land_params <- list(sector_desc = "ECONOMICS",
