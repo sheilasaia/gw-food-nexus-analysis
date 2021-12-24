@@ -1,5 +1,5 @@
 # ---- script header ----
-# script name: get_nass_data.R
+# script name: 01_get_nass_data.R
 # purpose of script: get nass yield data for specific crops and specific counties in US
 # author: sheila saia
 # date created: 2021-12-01
@@ -338,20 +338,29 @@ county_crop_data_tidy_distinct <- county_crop_data_tidy %>%
   distinct()
 
 # for loop
-for  (i in 1:dim(county_crop_data_tidy_distinct)[1]) {
+for  (i in 1186:dim(county_crop_data_tidy_distinct)[1]) {
   # get variables
   temp_state_ansi <- county_crop_data_tidy_distinct$state_fips[i]
   temp_county_ansi <- county_crop_data_tidy_distinct$county_fips[i]
   
+  # not using this!
+  # define parameter list for record count query
+  # temp_ag_land_params <- list(sector_desc = "ECONOMICS",
+  #                             commodity_desc = "AG LAND",
+  #                             agg_level_desc = "COUNTY",
+  #                             source_desc = "CENSUS",
+  #                             state_ansi = temp_state_ansi,
+  #                             county_ansi = temp_county_ansi,
+  #                             domain_desc = "TOTAL",
+  #                             statisticcat_desc = "AREA")
+  
   # define parameter list for record count query
   temp_ag_land_params <- list(sector_desc = "ECONOMICS",
-                              commodity_desc = "AG LAND",
+                              commodity_desc = "FARM OPERATIONS",
                               agg_level_desc = "COUNTY",
                               source_desc = "CENSUS",
                               state_ansi = temp_state_ansi,
-                              county_ansi = temp_county_ansi,
-                              domain_desc = "TOTAL",
-                              statisticcat_desc = "AREA")
+                              county_ansi = temp_county_ansi)
   
   # get record count
   temp_records_count <- nassqs_record_count(temp_ag_land_params)$count
@@ -372,6 +381,9 @@ for  (i in 1:dim(county_crop_data_tidy_distinct)[1]) {
              year, 
              value = value_fix, 
              unit_desc,
+             domain_desc,
+             domaincat_desc,
+             statisticcat_desc,
              prodn_practice_desc,
              short_desc,
              location_desc,
@@ -393,7 +405,10 @@ for  (i in 1:dim(county_crop_data_tidy_distinct)[1]) {
                                     year = NA, 
                                     value = NA, 
                                     unit_desc = NA,
-                                    prodn_practice_desc,
+                                    domain_desc = NA, 
+                                    domaincat_desc = NA,
+                                    statisticcat_desc = NA,
+                                    prodn_practice_desc = NA,
                                     short_desc = NA,
                                     location_desc = NA,
                                     nass_variable = "ag_land") %>%
@@ -406,6 +421,9 @@ for  (i in 1:dim(county_crop_data_tidy_distinct)[1]) {
     print(paste0("no ag land data available for row ", i))
   }
 }
+
+# domaincat_desc NAICS classification (1111) = oil and grain farming (https://www.naics.com/six-digit-naics/?code=11)
+# domain_desc only want "AREA OPERATED" but keep this b/c there is other info
 
 
 # ---- export data ----
